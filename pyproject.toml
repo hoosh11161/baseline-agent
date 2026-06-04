@@ -49,8 +49,13 @@ name = "tuna"
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 default = true
 
+[tool.setuptools]
+include-package-data = false
+py-modules = []
+
 [tool.setuptools.packages.find]
-where = [".", "arenaagent/generated"]
+where = ["."]
+include = ["arenaagent*", "arena*", "launcher*"]
 
 [tool.ruff]
 extend-exclude = ["*_pb2.py", "*_grpc.py"]
