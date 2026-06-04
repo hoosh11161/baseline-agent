@@ -55,7 +55,7 @@ py-modules = []
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["arenaagent*", "arena*", "launcher*"]
+include = [".", "arenaagent*", "arena*", "launcher*"]
 
 [tool.ruff]
 extend-exclude = ["*_pb2.py", "*_grpc.py"]
