@@ -29,7 +29,7 @@
     },
     "move_to_npc": {
         "sig": "(npc_name: str)",
-        "docs": "Move to a named NPC.\n\n:param npc_name: npc1/npc2/npc3"
+        "docs": "Move to a named NPC.\n\n:param npc_name: 指定的npc名字"
     },
     "move_to_location": {
         "sig": "(target_location:Vector3, stop_distance:float=0.5)", 
@@ -37,7 +37,7 @@
     },
     "speak_to_npc": {
         "sig": "(npc_name:str, message:str)",
-        "docs": "与指定NPC说话。\n\n:param npc_name: npc1/npc2/npc3\n:param message: 对话内容\n"
+        "docs": "与指定NPC说话。\n\n:param npc_name: 指定的npc名字\n:param message: 对话内容\n"
     },
     "submit_answer": {
         "sig": "(output:any)",

@@ -132,7 +132,7 @@ class VLMAgent(AgentBase):
 
         # 1/2/3: 获取感知（第一视角 + 可见物体映射）
         perception = (
-            self.tongsim.acquire_first_person_perception(self.character_id)
+            self.tongsim.acquire_first_person_perception(self.character_id, width=1280, height=720)
             if self.tongsim and self.character_id
             else {}
         )
