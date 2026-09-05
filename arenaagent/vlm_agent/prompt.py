@@ -171,9 +171,9 @@ class PromptGenerator:
         return message
 
     def _append_hand_status(self, interaction_text: str, variables: dict[str, Any]) -> str:
-        object_in_hand = variables.get("object_in_hand")
-        if object_in_hand:
-            return f"{interaction_text}\n 当前手上物品为：{object_in_hand}"
+        has_object_in_hand = bool(variables.get("object_in_hand"))
+        if has_object_in_hand:
+            return f"{interaction_text}\n 当前手上有物品。"
         return f"{interaction_text}\n 当前手上无物品。"
 
     @staticmethod

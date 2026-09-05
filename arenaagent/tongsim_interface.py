@@ -4,12 +4,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
-
 
 @dataclass
 class Location:
-    """位置（XYZ 坐标）。"""
+    """仿真世界中的 XYZ 坐标。"""
 
     X: float
     Y: float
@@ -18,7 +16,7 @@ class Location:
 
 @dataclass
 class Rotation:
-    """旋转（roll / yaw / pitch）。"""
+    """由滚转角、偏航角和俯仰角组成的旋转。"""
 
     roll: float
     yaw: float
@@ -26,78 +24,51 @@ class Rotation:
 
 
 class TongSimInterface(ABC):
-    """TongSim 数据与动作接口（信息 / 动作）。"""
+    """面向客户端的 TongSim 感知与动作接口。
 
-    # 功能接口
+    动作接口接收的物体 ID 均为服务端分配的映射 ID，
+    本接口不会向客户端暴露 TongSim SDK 的原始 ID。
+    """
+
     @abstractmethod
-    def acquire_first_person_image(self, character_id, encode_base64: bool = True) -> np.ndarray | str | None:
-        """
-        信息：获取角色的第一人称画面，可选返回 base64。
-        参数：
-            character_id: 仿真中的角色唯一标识。
-            encode_base64: 是否以 base64 字符串返回。
+    def acquire_first_person_perception(
+        self,
+        character_id,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> dict[str, Any]:
+        """获取第一人称组合图和映射后的物体信息。
+
+        ``width`` 和 ``height`` 表示最终组合图的宽高，必须同时传入。
+        默认不缩放：宽度为摄像机宽度的 2 倍，高度等于摄像机高度。
+        按 ``spawn_character`` 默认摄像机 720×1000 计算，默认组合图为 1440×1000。
+        ``VLMAgent`` 默认使用 1280×720 摄像机，对应组合图为 2560×720。
         """
         raise NotImplementedError()
 
     @abstractmethod
-    def set_object_pose(self, object_id: str, location, rotation: Rotation) -> bool:
+    def spawn_character(
+        self,
+        loc,
+        rot,
+        desired_name,
+        fov: float = 120.0,
+        width: int = 720,
+        height: int = 1000,
+        camera_name_suffix: str | None = None,
+        camera_stream_id: str | None = None,
+        spawn_extra_camera: bool = False,
+    ) -> str:
         raise NotImplementedError()
 
     @abstractmethod
-    def acquire_first_person_segmantic_image(self, character_id, encode_base64: bool = True) -> np.ndarray | str | None:
-        """
-        信息：获取角色的第一人称的语义分割画面，可选返回 base64。
-        参数：
-            character_id: 仿真中的角色唯一标识。
-            encode_base64: 是否以 base64 字符串返回。
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def fetch_first_person_visible_objects(self, character_id) -> list:
-        """
-        信息：列出第一人称视角可见的物体。
-        参数：
-            character_id: 仿真中的角色唯一标识。
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def get_object_basic_info(self, object_id: str) -> dict[str, Any]:
-        """
-        信息：根据 object_id 获取物体的基础属性（颜色、形状、放置位置）。
-        返回值中的字段缺失时可返回 None。
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def get_object_world_aabb(self, object_id: str) -> dict[str, Any]:
-        """
-        信息：获取物体在世界坐标系下的 3D 轴对齐包围盒 (AABB)。
-        返回值包含 min 和 max 两个字典，每个字典包含 x, y, z 坐标。
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def spawn_character(self) -> str:
-        raise NotImplementedError()
-
-    @abstractmethod
-    def destory_character(self):
+    def destory_character(self, character_id=None):
         raise NotImplementedError()
 
     @abstractmethod
     def close(self) -> None:
         raise NotImplementedError()
 
-    @abstractmethod
-    def get_object_id_by_name(self, name: str) -> str | None:
-        """
-        信息：根据物体名称获取物体信息（至少包含 object_id 字段）。
-        """
-        raise NotImplementedError()
-
-    # 动作接口（按 api_info.json 定义，保留兼容旧接口）
     @abstractmethod
     def look_at_location(
         self, character_id, target_location, is_cancel: bool = False, execute_immediately: bool = False
@@ -113,7 +84,17 @@ class TongSimInterface(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def move_and_take_object(self, character_id, object_id: str, which_hand: int = 0):
+    def move_and_take_object(
+        self,
+        character_id,
+        object_id: str,
+        which_hand: int = 0,
+        movable_object_ids: list[str] | None = None,
+    ):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def move_and_take_puzzle_piece(self, character_id, piece_object_id: str, which_hand: int = 0):
         raise NotImplementedError()
 
     @abstractmethod
@@ -125,18 +106,15 @@ class TongSimInterface(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def put_down_to_location(
+    def put_down_sth(
         self,
         character_id,
         target_location,
-        which_hand: int = 0,
-        disable_physics: bool = False,
-        hold_if_unreachable: bool = False,
-        force_release: bool = True,
+        target_rotation: Rotation | None = None,
         auto_rotate: bool = False,
-        rotation: Rotation | None = None,
         force_locate: bool = False,
     ):
+        """将手中物体放到指定位置；未指定旋转时由服务端自动调整朝向。"""
         raise NotImplementedError()
 
     @abstractmethod
@@ -145,6 +123,10 @@ class TongSimInterface(ABC):
 
     @abstractmethod
     def move_to_object(self, character_id, object_id: str):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def move_to_npc(self, character_id, name: str):
         raise NotImplementedError()
 
     @abstractmethod
@@ -166,7 +148,7 @@ class TongSimInterface(ABC):
     @abstractmethod
     def wash_object_in_hand(self, character_id, faucet_object_id: str):
         raise NotImplementedError()
-    
+
     @abstractmethod
     def mop_floor(self, character_id, dirt_id: str):
         raise NotImplementedError()
@@ -179,13 +161,8 @@ class TongSimInterface(ABC):
     def speak_to_npc(self, character_id, target: str, content: str):
         raise NotImplementedError()
 
-    # 兼容旧接口
     @abstractmethod
-    def move_and_put_down_object_in_container(
-        self,
-        character_id,
-        which_hand: int = 0,
-    ):
+    def move_and_put_down_object_in_container(self, character_id, which_hand: int = 0):
         raise NotImplementedError()
 
     @abstractmethod
@@ -200,5 +177,6 @@ class TongSimInterface(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def get_object_in_hand(self, character_id) -> tuple[str, int] | None:
+    def has_object_in_hand(self, character_id) -> tuple[bool, int | None]:
+        """返回手中是否存在物体以及被占用的手部索引。"""
         raise NotImplementedError()

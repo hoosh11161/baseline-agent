@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-import time
+import base64
 import copy
 import json
 import os
@@ -13,19 +13,18 @@ from loguru import logger
 
 from arenaagent.agent_base import AgentBase, AgentCfg, parse_struct_to_data
 from arenaagent.builder import Register
-from arenaagent.semantic_mapper import SemanticMapper
-from arenaagent.utils.configclass import configclass
 from arenaagent.tongsim_grpc_client import TongSimGrpcClient
 from arenaagent.tongsim_interface import Rotation, TongSimInterface
+from arenaagent.utils.configclass import configclass
 from arenaagent.vlm_agent.client import ClientFactory
-from arenaagent.vlm_agent.prompt import PromptGenerator
-from arenaagent.vlm_agent.vlm_config import VLMConfig
 from arenaagent.vlm_agent.json_parsor import extract_last_json_from_text
+from arenaagent.vlm_agent.prompt import PromptGenerator
 from arenaagent.vlm_agent.raven_skill import (
     cleanup_raven_temp_images,
-    handle as handle_raven_skill,
     materialize_task_data_images,
 )
+from arenaagent.vlm_agent.raven_skill import handle as handle_raven_skill
+from arenaagent.vlm_agent.vlm_config import VLMConfig
 
 
 @configclass
@@ -65,10 +64,10 @@ class VLMAgent(AgentBase):
         self.tongsim: TongSimInterface = None
         self.character_id: str | None = None
         self.prompt_generator: PromptGenerator | None = None
-        self.semantic_mapper: SemanticMapper | None = None
         self.history_messages: list[dict[str, Any]] = []
         self.last_json_parse_message = {}
         self._prompt_dump_index = 0
+        self._perception_dump_index = 0
         self._last_visible_objects_info: list[dict[str, Any]] = []
         self._last_npc_reply: str = ""
         self._last_npc_subject: dict[str, Any] | None = None
@@ -100,10 +99,9 @@ class VLMAgent(AgentBase):
         camera_width = int(opt.get("camera_width", 1280))
         camera_height = int(opt.get("camera_height", 720))
         self.character_id = self.tongsim.spawn_character(
-            self.cfg.agent_body_asset_name, spawn_loc, spawn_rot, opt["name"], camera_fov, camera_width, camera_height
+            spawn_loc, spawn_rot, opt["name"], camera_fov, camera_width, camera_height
         )
         self.prompt_generator = PromptGenerator(self.cfg.vlm_config.prompt_config)
-        self.semantic_mapper = SemanticMapper(self.tongsim, self.character_id, log_dir=self.cfg.log_dir)
         self._initialized = True
 
     def deinit(self):
@@ -132,24 +130,31 @@ class VLMAgent(AgentBase):
         if not self._initialized:
             self.init()
 
+        # 1/2/3: 获取感知（第一视角 + 可见物体映射）
+        perception = (
+            self.tongsim.acquire_first_person_perception(self.character_id)
+            if self.tongsim and self.character_id
+            else {}
+        )
+        b64_image = perception.get("image")
+        self._save_perception_image(b64_image)
+        visible_objects_info = perception.get("objects", [])
+        self._last_visible_objects_info = visible_objects_info or []
+        image_data = self._to_data_url(b64_image)
+
+        logger.debug("Perception acquired: image size={}, visible objects={}", len(b64_image) if b64_image else 0, visible_objects_info)
+
         if self._should_handle_piece_transfer():
             piece_action = self._maybe_handle_piece_transfer(subject)
             if piece_action is not None:
                 logger.debug("Handled piece transfer for subject {}, returning action {}", subject, piece_action)
                 return piece_action
 
-        # 1/2/3: 获取感知（第一视角 + 可见物体映射）
-        b64_image, visible_objects, visible_objects_info = (
-            self.semantic_mapper.get_perception_from_camera(is_save=True) if self.semantic_mapper else (None, [], [])
-        )
-        self._last_visible_objects_info = visible_objects_info or []
-        image_data = self._to_data_url(b64_image)
-
         # 当前手中物体
-        object_in_hand = None
+        object_in_hand = False
         if self.tongsim and self.character_id:
             try:
-                object_in_hand = self.tongsim.get_object_in_hand(self.character_id)
+                object_in_hand, _ = self.tongsim.has_object_in_hand(self.character_id)
             except Exception as exc:
                 logger.warning(f"获取手中物体失败: {exc}")
 
@@ -343,6 +348,28 @@ class VLMAgent(AgentBase):
         except Exception as exc:  # pragma: no cover - logging guard
             logger.warning("Failed to save prompt messages: %s", exc)
 
+    def _save_perception_image(self, image_b64: str | None) -> None:
+        """将第一人称感知图片保存到 prompt 日志目录。"""
+        if not image_b64:
+            return
+
+        prompt_dir = os.path.join(getattr(self.cfg, "log_dir", "") or "logs", "prompts")
+        try:
+            payload = image_b64.split(",", 1)[1] if image_b64.startswith("data:image") else image_b64
+            image_bytes = base64.b64decode(payload, validate=True)
+            os.makedirs(prompt_dir, exist_ok=True)
+            self._perception_dump_index += 1
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_path = os.path.join(
+                prompt_dir,
+                f"perception_{self.agent_id}_{timestamp}_{self._perception_dump_index:04d}.jpg",
+            )
+            with open(file_path, "wb") as handle:
+                handle.write(image_bytes)
+            logger.info("已将感知图片保存到 {}", file_path)
+        except (OSError, ValueError) as exc:  # pragma: no cover - 日志保护
+            logger.warning("保存感知图片失败: {}", exc)
+
     @staticmethod
     def _strip_image_urls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Remove image_url fields and image_url message blocks before persisting prompts."""
@@ -422,9 +449,9 @@ class VLMAgent(AgentBase):
             logger.error(f"解析动作失败: {e}")
             return {}
 
-    def _enqueue_movable_objects(self, object_raw_id: list[Any]):
-        logger.debug("object movable id {}", object_raw_id)
-        self._movable_objects = object_raw_id
+    def _enqueue_movable_objects(self, object_ids: list[Any]):
+        logger.debug("object movable id {}", object_ids)
+        self._movable_objects = [str(object_id) for object_id in object_ids]
 
     def _maybe_handle_piece_transfer(self, subject: Any) -> dict[str, Any] | None:
         if not isinstance(subject, dict):
@@ -453,41 +480,47 @@ class VLMAgent(AgentBase):
             logger.warning("TongSim not ready for piece transfer.")
             return {}
 
-        raw_obj_id = self._to_raw_object_id(piece_object_id)
         target_loc = self._coerce_location(target_loc)
 
         try:
-            object_in_hand = self.tongsim.get_object_in_hand(self.character_id)
-            if object_in_hand:
-                _, which_hand = object_in_hand
-                which_hand = int(which_hand)
+            has_object, which_hand = self.tongsim.has_object_in_hand(self.character_id)
+            if has_object and which_hand is not None:
                 drop_loc = self._get_current_forward_drop_location(forward_offset_cm=10.0)
                 if not drop_loc:
                     drop_loc = target_loc
                 if drop_loc:
-                    self.tongsim.put_down_to_location(
+                    self.tongsim.put_down_sth(
                         self.character_id,
                         target_location=drop_loc,
-                        which_hand=which_hand,
                     )
-            self.tongsim.move_and_take_object(self.character_id, raw_obj_id, which_hand=0)
-            logger.debug(
-                "Picked up piece {} with raw id {}, now moving to target location {} and rotation {} for placement",
+            take_result = self.tongsim.move_and_take_puzzle_piece(
+                self.character_id,
                 piece_object_id,
-                raw_obj_id,
+                which_hand=0,
+            )
+            if take_result.get("result") == "failed":
+                raise RuntimeError(take_result.get("error", "failed to take puzzle piece"))
+            logger.debug(
+                "Picked up puzzle piece {}, now moving to target location {} and rotation {} for placement",
+                piece_object_id,
                 target_loc,
                 target_rot,
             )
-            put_rotation = Rotation(
+            target_rotation = Rotation(
                 roll=target_rot[0] if len(target_rot) > 0 else 0.0,
                 pitch=target_rot[1] if len(target_rot) > 1 else 0.0,
                 yaw=target_rot[2] if len(target_rot) > 2 else 90.0,
             )
             self.tongsim.move_to_location(self.character_id, target_loc, stop_distance=30.0)
-            self.tongsim.put_down_to_location(
-                self.character_id, target_location=target_loc, rotation=put_rotation, which_hand=0
+            put_result = self.tongsim.put_down_sth(
+                self.character_id,
+                target_location=target_loc,
+                target_rotation=target_rotation,
+                auto_rotate=False,
+                force_locate=True,
             )
-            self.tongsim.set_object_pose(raw_obj_id, target_loc, put_rotation)
+            if put_result.get("result") == "failed":
+                raise RuntimeError(put_result.get("error", "failed to place puzzle piece"))
 
             if stage_name == "jigsaw":
                 view_loc = [target_loc[0] - 150, target_loc[1] - 120.0, 3]
@@ -595,7 +628,7 @@ class VLMAgent(AgentBase):
             "move_and_take_object": self._handle_move_and_take,
             "move_forward": self._handle_move_forward,
             "move_backward": self._handle_move_backward,
-            "put_down_to_location": self._handle_put_down_to_location,
+            "put_down_sth": self._handle_put_down_sth,
             "turn_in_degree": self._handle_turn_degree,
             "move_to_object": self._handle_move_to_object,
             "move_to_npc": self._handle_move_to_npc,
@@ -611,7 +644,6 @@ class VLMAgent(AgentBase):
             "move_and_put_down": self._handle_move_and_put_down,
             # 兼容旧动作
             "move_and_put_down_object_in_container": self._handle_put_in_container,
-            "put_down_sth_to_location": self._handle_put_down_to_location,
             "turn_around_to_degree": self._handle_turn_degree,
         }.get(name)
 
@@ -667,25 +699,6 @@ class VLMAgent(AgentBase):
                     return params[key]
         return default
 
-    def _to_raw_object_id(self, obj_id: Any) -> Any:
-        if obj_id is None or self.semantic_mapper is None:
-            return obj_id
-        if isinstance(obj_id, bool):
-            return obj_id
-        mapped_id = None
-        if isinstance(obj_id, int):
-            mapped_id = obj_id
-        elif isinstance(obj_id, float) and obj_id.is_integer():
-            mapped_id = int(obj_id)
-        elif isinstance(obj_id, str):
-            stripped = obj_id.strip()
-            if stripped.isdigit():
-                mapped_id = int(stripped)
-        if mapped_id is None:
-            return obj_id
-        raw_id = self.semantic_mapper.get_raw_id(mapped_id)
-        return raw_id
-
     def _handle_look_at_location(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         target_location = self._get_param(params, "target_location", "location")
         is_cancel = bool(self._get_param(params, "is_cancel", default=False))
@@ -699,7 +712,6 @@ class VLMAgent(AgentBase):
 
     def _handle_look_at_object(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         obj_id = self._get_param(params, "object_id", "object")
-        obj_id = self._to_raw_object_id(obj_id)
         is_cancel = bool(self._get_param(params, "is_cancel", default=False))
         if not obj_id:
             logger.error("缺少 object_id，无法执行 look_at_object。")
@@ -708,7 +720,6 @@ class VLMAgent(AgentBase):
 
     def _handle_point_at_object(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         obj_id = self._get_param(params, "object_id", "object")
-        obj_id = self._to_raw_object_id(obj_id)
         is_cancel = bool(self._get_param(params, "is_cancel", default=False))
         which_hand = self._get_param(params, "which_hand", default=0)
         if not obj_id:
@@ -723,15 +734,16 @@ class VLMAgent(AgentBase):
 
     def _handle_move_and_take(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         obj_id = self._get_param(params, "object_id", "object")
-        raw_obj_id = self._to_raw_object_id(obj_id)
-        if raw_obj_id not in self._movable_objects:
-            return {"result": "failed", "error": "can not take this object"}
-
         which_hand = self._get_param(params, "which_hand", default=0)
-        if not raw_obj_id:
+        if not obj_id:
             logger.error("缺少 object_id，无法执行 move_and_take_object。")
             return self._fail_result(error="missing required parameter: object_id")
-        return self.tongsim.move_and_take_object(self.character_id, raw_obj_id, which_hand=which_hand)
+        return self.tongsim.move_and_take_object(
+            self.character_id,
+            obj_id,
+            which_hand=which_hand,
+            movable_object_ids=self._movable_objects,
+        )
 
     def _handle_put_in_container(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         which_hand = self._get_param(params, "which_hand", default=0)
@@ -763,31 +775,34 @@ class VLMAgent(AgentBase):
             put_rotation=put_rotation,
         )
 
-    def _handle_put_down_to_location(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
-        loc = self._get_param(params, "target_location", "location")
-        rot_val = self._get_param(params, "rotation")
-        rotation = None
-        if isinstance(rot_val, dict):
-            rotation = Rotation(
-                roll=rot_val.get("roll", 0.0),
-                yaw=rot_val.get("yaw", 0.0),
-                pitch=rot_val.get("pitch", 0.0),
-            )
-        which_hand = self._get_param(params, "which_hand", default=0)
-        auto_rotate = bool(self._get_param(params, "auto_rotate", default=False))
-        force_release = bool(self._get_param(params, "force_release", default=True))
-        disable_physics = bool(self._get_param(params, "disable_physics", default=False))
-        hold_if_unreachable = bool(self._get_param(params, "hold_if_unreachable", default=True))
-        force_locate = bool(self._get_param(params, "force_locate", default=False))
-        return self.tongsim.put_down_to_location(
+    def _handle_put_down_sth(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
+        target_location = self._get_param(params, "target_location")
+        rot_val = self._get_param(params, "target_rotation")
+        target_rotation = None
+        if rot_val is not None:
+            if not isinstance(rot_val, dict) or not all(axis in rot_val for axis in ("roll", "yaw", "pitch")):
+                return self._fail_result(error="target_rotation must contain roll, yaw, and pitch")
+            try:
+                target_rotation = Rotation(
+                    roll=float(rot_val["roll"]),
+                    yaw=float(rot_val["yaw"]),
+                    pitch=float(rot_val["pitch"]),
+                )
+            except (TypeError, ValueError):
+                return self._fail_result(error="target_rotation values must be numbers")
+        if target_location is None:
+            return self._fail_result(error="missing required parameter: target_location")
+        auto_rotate = self._get_param(params, "auto_rotate", default=False)
+        force_locate = self._get_param(params, "force_locate", default=False)
+        if not isinstance(auto_rotate, bool):
+            return self._fail_result(error="auto_rotate must be a boolean")
+        if not isinstance(force_locate, bool):
+            return self._fail_result(error="force_locate must be a boolean")
+        return self.tongsim.put_down_sth(
             self.character_id,
-            target_location=loc,
-            which_hand=which_hand,
-            rotation=rotation,
+            target_location=target_location,
+            target_rotation=target_rotation,
             auto_rotate=auto_rotate,
-            force_release=force_release,
-            disable_physics=disable_physics,
-            hold_if_unreachable=hold_if_unreachable,
             force_locate=force_locate,
         )
 
@@ -831,16 +846,10 @@ class VLMAgent(AgentBase):
 
     def _handle_move_to_object(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         obj_id = self._get_param(params, "object_id", "object")
-        raw_obj_id = self._to_raw_object_id(obj_id)
-        if not raw_obj_id:
-            loc = self._find_object_location(raw_obj_id)
-            if loc:
-                return self.tongsim.move_to_location(self.character_id, loc)
-
+        if not obj_id:
             logger.error("缺少 object_id 或 object_id 无效，无法执行 move_to_object。")
             return self._fail_result(error="missing or invalid parameter: object_id")
-        else:
-            return self.tongsim.move_to_object(self.character_id, raw_obj_id)
+        return self.tongsim.move_to_object(self.character_id, obj_id)
 
     def _handle_move_to_npc(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         raw_npc_name = self._get_param(params, "npc_name", "npc", "target", "name")
@@ -850,31 +859,19 @@ class VLMAgent(AgentBase):
             return self._fail_result(error="missing required parameter: npc_name")
 
         npc_asset_name = self._npc_name_to_asset_name.get(npc_name)
-        npc_object_id = self.tongsim.get_object_id_by_name(npc_asset_name) if npc_asset_name else None
         logger.info(
-            "move_to_npc got npc_name {} mapped to asset_name {} and object_id {}",
+            "move_to_npc got npc_name {} mapped to asset_name {}",
             npc_name,
             npc_asset_name,
-            npc_object_id,
         )
-        if npc_object_id:
-            return self.tongsim.move_to_object(self.character_id, npc_object_id)
+        if npc_asset_name:
+            return self.tongsim.move_to_npc(self.character_id, npc_asset_name)
         return self._fail_result(error=f"npc not found: {npc_name}")
-
-    def _find_object_location(self, obj_id: Any) -> dict[str, Any] | None:
-        if obj_id is None:
-            return None
-        target = str(obj_id)
-        for obj in self._last_visible_objects_info:
-            if str(obj.get("object_id")) == target:
-                return obj.get("place_location") or None
-        return None
 
     def _handle_pour_water(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         obj_id = self._get_param(params, "object_id", "object")
         location = self._get_param(params, "location", "target_location")
         which_hand = self._get_param(params, "which_hand", default=0)
-        obj_id = self._to_raw_object_id(obj_id)
         if not obj_id or location is None:
             logger.error("缺少 object_id 或 location，无法执行 pour_water。")
             return self._fail_result(error="missing required parameter: object_id or location")
@@ -882,7 +879,6 @@ class VLMAgent(AgentBase):
 
     def _handle_sit_down_to_object(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         obj_id = self._get_param(params, "object_id", "object")
-        obj_id = self._to_raw_object_id(obj_id)
         if not obj_id:
             logger.error("缺少 object_id，无法执行 sit_down_to_object。")
             return self._fail_result(error="missing required parameter: object_id")
@@ -891,7 +887,6 @@ class VLMAgent(AgentBase):
     def _handle_slice_food(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         obj_id = self._get_param(params, "object_id", "object")
         location = self._get_param(params, "location", "target_location")
-        obj_id = self._to_raw_object_id(obj_id)
         if not obj_id or location is None:
             logger.error("缺少 object_id 或 location，无法执行 slice_food。")
             return self._fail_result(error="missing required parameter: object_id or location")
@@ -899,7 +894,6 @@ class VLMAgent(AgentBase):
 
     def _handle_wash_hands(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         faucet_id = self._get_param(params, "faucet_object_id", "object_id", "object")
-        faucet_id = self._to_raw_object_id(faucet_id)
         if not faucet_id:
             logger.error("缺少 faucet_object_id，无法执行 wash_hands。")
             return self._fail_result(error="missing required parameter: faucet_object_id")
@@ -907,7 +901,6 @@ class VLMAgent(AgentBase):
 
     def _handle_wash_object_in_hand(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         faucet_id = self._get_param(params, "faucet_object_id", "object_id", "object")
-        faucet_id = self._to_raw_object_id(faucet_id)
         if not faucet_id:
             logger.error("缺少 faucet_object_id，无法执行 wash_object_in_hand。")
             return self._fail_result(error="missing required parameter: faucet_object_id")
@@ -915,7 +908,6 @@ class VLMAgent(AgentBase):
 
     def _handle_mop_floor(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
         dirt_id = self._get_param(params, "dirt_id", "object_id", "object")
-        dirt_id = self._to_raw_object_id(dirt_id)
         if not dirt_id:
             logger.error("缺少 dirt_id，无法执行 mop_floor。")
             return self._fail_result(error="missing required parameter: dirt_id")

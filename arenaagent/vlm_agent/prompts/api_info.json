@@ -1,7 +1,7 @@
 {
     "move_and_take_object": {
         "sig": "(object_id: str, which_hand=0)", 
-        "docs": "移动到对象的位置并抓取对象。\n\n:param object_id: 目标对象\n:param which_hand: 使用的手 (int)"
+        "docs": "移动到对象的位置并抓取对象。\n\n:param object_id: 当前第一视觉感知图片中可见物体列表中的映射 ID 值\n:param which_hand: 使用的手 (int)"
     },
     "move_forward": {
         "sig": "(distance: float)",
@@ -10,6 +10,10 @@
     "move_backward": {
         "sig": "(distance: float)",
         "docs": "向后退指定距离，单位是厘米。\n\n:param distance: 前进距离（厘米）"
+    },
+    "put_down_sth": {
+        "sig": "(target_location: Vector3, target_rotation: EulerAngles|None=None, auto_rotate: bool=False, force_locate: bool=False)",
+        "docs": "将手中的物体放到指定位置。服务端会自动选择持有物体的手；如果双手都没有物体则返回错误。\n\n:param target_location: 物体放置的目标位置，格式为三维坐标\n:param target_rotation: 可选的目标欧拉角，格式为 {\"roll\": 0, \"yaw\": 90, \"pitch\": 0}，单位为度；为空或省略时服务端自动启用 auto_rotate\n:param auto_rotate: 是否自动调整物体旋转；target_rotation 为空时该参数会被强制设为 true\n:param force_locate: 是否强制将物体放到目标位置\n"
     },
     "move_and_put_down": {
         "sig": "(which_hand=0, move_target_location:Vector3, put_target_location:Vector3, put_rotation: Quaternion|None)",
@@ -21,7 +25,7 @@
     }, 
     "move_to_object": {
         "sig": "(object_id: str)", 
-        "docs": "移动至指定目标。\n\n:param object_id: 目标实体的 ID"
+        "docs": "移动至指定目标。\n\n:param object_id: 当前第一视觉感知图片可见物体列表中的映射 ID 值"
     },
     "move_to_npc": {
         "sig": "(npc_name: str)",

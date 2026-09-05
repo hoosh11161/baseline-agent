@@ -4,6 +4,7 @@ NPC回复（如有）:"{self.npc_reply}"
 NPC任务提示（如有）:{self.npc_subject}
 
 当前视野物体信息如下：
+其中 object_id 是组合图右侧标注的映射 ID，也是物体动作唯一允许使用的 ID。
 [
   {self.visiable_objects_info}
 ]

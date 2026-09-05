@@ -236,31 +236,28 @@ def deinit(self):
 
 感知相关的代码主要在：
 
-- `arenaagent/semantic_mapper.py`
 - `arenaagent/tongsim_interface.py`
+- `arenaagent/tongsim_grpc_client.py`
 
 `VLMAgent.run_step()` 里最关键的一句：
 
 ```python
-self.semantic_mapper.get_perception_from_camera(is_save=True)
+perception = self.tongsim.acquire_first_person_perception(self.character_id)
 ```
 
-这一行会同时拿到三样东西：
+这个接口一次返回完整的第一人称感知结果，主要包含：
 
-- `b64_image`：发给模型的图。左边是第一视角 RGB，右边是叠了数字 ID 的语义分割图。
-- `visible_objects`：可见物体的 ID 映射表。
-- `visible_objects_info`：可见物体的文字描述，比如颜色、形状、位置、包围盒。
+- `image`：base64 编码的 JPEG 组合图。左边是第一视角 RGB，右边是叠加了数字 ID 的语义分割图。
+- `objects`：当前可见物体的信息列表。每项的 `object_id` 是服务端分配的映射 ID，并包含颜色、形状、位置、世界坐标 AABB 等信息。
 
-这里有一个**特别容易踩的坑**：模型调用动作时用的物体 ID，必须是右边语义分割图上标出来的那个数字。不要让模型自己编 ID，也不要直接拿 TongSim 底层的原始 ID。代码会自动帮你把数字 ID 翻译回真正的 object id。这一层翻译没走对，后面动作怎么调都白搭。
+`VLMAgent` 会从返回值中读取 `perception["image"]` 发给模型，并把 `perception["objects"]` 作为可见物体信息写进 prompt。接口也支持传入 `width` 和 `height` 调整最终组合图尺寸，但两个参数必须同时传入。不传时不缩放：组合图宽度为摄像机宽度的 2 倍，高度等于摄像机高度。`VLMAgent` 默认使用 1280×720 摄像机，因此组合图默认为 2560×720。
 
-常用的感知接口：
+这里有一个**特别容易踩的坑**：模型调用物体动作时使用的 ID，必须原样取自右侧语义分割图的数字标注或 `objects[*].object_id`。两者是同一个映射 ID。不要让模型自己编 ID。
 
-- `acquire_first_person_image()`：第一视角 RGB。
-- `acquire_first_person_segmantic_image()`：语义分割图。
-- `fetch_first_person_visible_objects()`：当前视野里有哪些物体。
-- `get_object_basic_info()`：查物体颜色、形状、放置位置。
-- `get_object_world_aabb()`：查物体 3D 包围盒。
-- `get_object_in_hand()`：手里有没有拿东西。
+目前与感知直接相关的客户端接口只有两个：
+
+- `acquire_first_person_perception(character_id, width=None, height=None)`：一次取得组合图和映射后的可见物体信息，返回 `{"image": ..., "objects": [...]}`。
+- `has_object_in_hand(character_id)`：查询角色是否持有物体，返回 `(has_object, hand_idx)`；未持有时 `hand_idx` 为 `None`。这个接口只返回持有状态和手部索引，不返回物体 ID。
 
 模型老是抓错东西，第一件事别改 prompt，先去翻 `logs/prompts/perception_*.jpg`，那张图就是模型当时眼睛看到的世界。很多时候你会发现，问题是目标根本就没进视野，或者被挡住了。
 
@@ -542,11 +539,11 @@ AgentBase 把执行结果交给任务系统
 
 第一次摸这个项目，按这个顺序读会舒服很多：
 
-1. `README.md` + `usage_guid.md`：怎么装、怎么跑。
+1. `README.md` + `docs/usage_guide.md`：怎么装、怎么跑。
 2. `arenaagent/builder.py`：命令行怎么把 Agent 拉起来。
 3. `arenaagent/agent_base.py`：跟任务系统的生命周期。
 4. `arenaagent/vlm_agent/vlm_agent.py`：每一步怎么看、怎么问、怎么做。
-5. `arenaagent/semantic_mapper.py`：物体 ID 和视觉信息怎么整理出来。
+5. `arenaagent/tongsim_grpc_client.py`：组合感知和映射 ID 如何通过 TongSim 服务获取。
 6. `arenaagent/vlm_agent/prompt.py`：prompt 是怎么拼起来的。
 7. `arenaagent/*_baseline_agent/prompts/`：开始动手改 prompt 提分。
 

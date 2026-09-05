@@ -12,7 +12,6 @@ from arenaagent.agent_base import pack_data_to_struct, parse_struct_to_data
 from arenaagent.generated.tongsim.tongsim_service_pb2_grpc import TongSimServiceStub
 from arenaagent.tongsim_interface import Rotation, TongSimInterface
 
-
 _MAX_MSG_BYTES = 50 * 1024 * 1024
 _GRPC_OPTIONS = [
     ("grpc.max_send_message_length", _MAX_MSG_BYTES),
@@ -22,7 +21,7 @@ _CLIENT_ID_METADATA_KEY = "x-tongsim-client-id"
 
 
 class TongSimGrpcClient(TongSimInterface):
-    """TongSimInterface implementation that proxies all calls to a remote TongSimService."""
+    """通过远程 TongSimService 代理调用的 TongSimInterface 实现。"""
 
     def __init__(self, endpoint: str = "127.0.0.1:50060", heartbeat_interval_secs: float = 2.0) -> None:
         self._channel = grpc.insecure_channel(endpoint, options=_GRPC_OPTIONS)
@@ -62,7 +61,7 @@ class TongSimGrpcClient(TongSimInterface):
                         self._heartbeat_compat_logged = True
                     return
                 logger.debug("TongSim heartbeat failed for client {}: {}", self._client_id, exc)
-            except Exception as exc:  # pragma: no cover - runtime guard
+            except Exception as exc:  # pragma: no cover - 运行时保护
                 logger.debug("TongSim heartbeat failed for client {}: {}", self._client_id, exc)
 
             if self._heartbeat_stop.wait(self._heartbeat_interval_secs):
@@ -74,12 +73,11 @@ class TongSimGrpcClient(TongSimInterface):
         self._call("heartbeat", {})
 
     # ------------------------------------------------------------------ #
-    # Character lifecycle
+    # 角色生命周期
     # ------------------------------------------------------------------ #
 
     def spawn_character(
         self,
-        asset_name,
         loc,
         rot,
         desired_name,
@@ -93,7 +91,6 @@ class TongSimGrpcClient(TongSimInterface):
         result = self._call(
             "spawn_character",
             {
-                "asset_name": asset_name,
                 "loc": list(loc),
                 "rot": list(rot),
                 "desired_name": desired_name,
@@ -120,49 +117,35 @@ class TongSimGrpcClient(TongSimInterface):
         self._channel.close()
 
     # ------------------------------------------------------------------ #
-    # Perception
+    # 感知
     # ------------------------------------------------------------------ #
 
-    def acquire_first_person_image(self, character_id, encode_base64: bool = True):
-        # Always returns base64 str from server; _decode_image() in SemanticMapper handles str.
-        result = self._call("acquire_first_person_image", {"character_id": str(character_id)})
-        return result.get("image")
+    def acquire_first_person_perception(
+        self,
+        character_id,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> dict[str, Any]:
+        """获取感知结果，并可指定最终组合图的宽高。
 
-    def acquire_first_person_segmantic_image(self, character_id, encode_base64: bool = True):
-        result = self._call("acquire_first_person_segmantic_image", {"character_id": str(character_id)})
-        return result.get("image")
+        默认不缩放；按默认摄像机 720×1000 计算，组合图为 1440×1000。
+        VLMAgent 默认使用 1280×720 摄像机，对应组合图为 2560×720。
+        """
+        payload: dict[str, Any] = {"character_id": str(character_id)}
+        if width is not None:
+            payload["width"] = width
+        if height is not None:
+            payload["height"] = height
+        return self._call("acquire_first_person_perception", payload)
 
-    def fetch_first_person_visible_objects(self, character_id) -> list:
-        result = self._call("fetch_first_person_visible_objects", {"character_id": str(character_id)})
-        return result.get("objects", [])
-
-    def get_object_basic_info(self, object_id: str) -> dict[str, Any]:
-        return self._call("get_object_basic_info", {"object_id": object_id})
-
-    def get_object_world_aabb(self, object_id: str) -> dict[str, Any]:
-        return self._call("get_object_world_aabb", {"object_id": object_id})
-
-    def get_object_id_by_name(self, name: str) -> str | None:
-        result = self._call("get_object_id_by_name", {"name": name})
-        return result.get("object_id") or None
-
-    def get_object_in_hand(self, character_id) -> tuple[str, int] | None:
-        result = self._call("get_object_in_hand", {"character_id": str(character_id)})
-        obj_id = result.get("object_id")
-        if obj_id is None:
-            return None
-        return (str(obj_id), int(result.get("hand_idx", 0)))
-
-    def set_object_pose(self, object_id: str, location, rotation: Rotation) -> bool:
-        loc = location
-        if hasattr(location, "X"):
-            loc = {"X": location.X, "Y": location.Y, "Z": location.Z}
-        rot = {"roll": rotation.roll, "yaw": rotation.yaw, "pitch": rotation.pitch}
-        result = self._call("set_object_pose", {"object_id": object_id, "location": loc, "rotation": rot})
-        return bool(result.get("result", False))
+    def has_object_in_hand(self, character_id) -> tuple[bool, int | None]:
+        result = self._call("has_object_in_hand", {"character_id": str(character_id)})
+        has_object = bool(result.get("has_object", False))
+        hand_idx = result.get("hand_idx")
+        return has_object, int(hand_idx) if hand_idx is not None else None
 
     # ------------------------------------------------------------------ #
-    # View control
+    # 视角控制
     # ------------------------------------------------------------------ #
 
     def look_at_location(
@@ -200,7 +183,7 @@ class TongSimGrpcClient(TongSimInterface):
         )
 
     # ------------------------------------------------------------------ #
-    # Movement
+    # 移动
     # ------------------------------------------------------------------ #
 
     def move_to_location(self, character_id, target_location, stop_distance: float = 0.5):
@@ -231,12 +214,38 @@ class TongSimGrpcClient(TongSimInterface):
             },
         )
 
-    def move_and_take_object(self, character_id, object_id: str, which_hand: int = 0):
+    def move_to_npc(self, character_id, name: str):
+        return self._call(
+            "move_to_npc",
+            {
+                "character_id": str(character_id),
+                "name": name,
+            },
+        )
+
+    def move_and_take_object(
+        self,
+        character_id,
+        object_id: str,
+        which_hand: int = 0,
+        movable_object_ids: list[str] | None = None,
+    ):
         return self._call(
             "move_and_take_object",
             {
                 "character_id": str(character_id),
                 "object_id": object_id,
+                "which_hand": which_hand,
+                "movable_object_ids": movable_object_ids,
+            },
+        )
+
+    def move_and_take_puzzle_piece(self, character_id, piece_object_id: str, which_hand: int = 0):
+        return self._call(
+            "move_and_take_puzzle_piece",
+            {
+                "character_id": str(character_id),
+                "piece_object_id": piece_object_id,
                 "which_hand": which_hand,
             },
         )
@@ -251,35 +260,32 @@ class TongSimGrpcClient(TongSimInterface):
         )
 
     # ------------------------------------------------------------------ #
-    # Object manipulation
+    # 物体操作
     # ------------------------------------------------------------------ #
 
-    def put_down_to_location(
+    def put_down_sth(
         self,
         character_id,
         target_location,
-        which_hand: int = 0,
-        disable_physics: bool = False,
-        hold_if_unreachable: bool = False,
-        force_release: bool = True,
+        target_rotation: Rotation | None = None,
         auto_rotate: bool = False,
-        rotation: Rotation | None = None,
         force_locate: bool = False,
     ):
+        """放下手中物体；具体使用哪只手由服务端自动判断。"""
         rot_dict = None
-        if rotation is not None:
-            rot_dict = {"roll": rotation.roll, "yaw": rotation.yaw, "pitch": rotation.pitch}
+        if target_rotation is not None:
+            rot_dict = {
+                "roll": target_rotation.roll,
+                "yaw": target_rotation.yaw,
+                "pitch": target_rotation.pitch,
+            }
         return self._call(
-            "put_down_to_location",
+            "put_down_sth",
             {
                 "character_id": str(character_id),
                 "target_location": target_location,
-                "which_hand": which_hand,
-                "disable_physics": disable_physics,
-                "hold_if_unreachable": hold_if_unreachable,
-                "force_release": force_release,
+                "target_rotation": rot_dict,
                 "auto_rotate": auto_rotate,
-                "rotation": rot_dict,
                 "force_locate": force_locate,
             },
         )
@@ -355,7 +361,7 @@ class TongSimGrpcClient(TongSimInterface):
         )
 
     # ------------------------------------------------------------------ #
-    # Interaction
+    # 交互
     # ------------------------------------------------------------------ #
     def sit_down_to_object(self, character_id, object_id: str):
         return self._call(

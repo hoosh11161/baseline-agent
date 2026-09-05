@@ -12,14 +12,8 @@ service TongSimService {
   rpc heartbeat(google.protobuf.Struct)         returns (google.protobuf.Struct) {}
 
   // Perception
-  rpc acquire_first_person_image(google.protobuf.Struct)           returns (google.protobuf.Struct) {}
-  rpc acquire_first_person_segmantic_image(google.protobuf.Struct) returns (google.protobuf.Struct) {}
-  rpc fetch_first_person_visible_objects(google.protobuf.Struct)   returns (google.protobuf.Struct) {}
-  rpc get_object_basic_info(google.protobuf.Struct)                returns (google.protobuf.Struct) {}
-  rpc get_object_id_by_name(google.protobuf.Struct)                returns (google.protobuf.Struct) {}
-  rpc get_object_in_hand(google.protobuf.Struct)                   returns (google.protobuf.Struct) {}
-  rpc set_object_pose(google.protobuf.Struct)                      returns (google.protobuf.Struct) {}
-  rpc get_object_world_aabb(google.protobuf.Struct)               returns (google.protobuf.Struct) {}
+  rpc acquire_first_person_perception(google.protobuf.Struct) returns (google.protobuf.Struct) {}
+  rpc has_object_in_hand(google.protobuf.Struct)              returns (google.protobuf.Struct) {}
 
   // View control
   rpc look_at_location(google.protobuf.Struct)  returns (google.protobuf.Struct) {}
@@ -30,11 +24,13 @@ service TongSimService {
   rpc move_to_location(google.protobuf.Struct)   returns (google.protobuf.Struct) {}
   rpc move_forward(google.protobuf.Struct)        returns (google.protobuf.Struct) {}
   rpc move_to_object(google.protobuf.Struct)      returns (google.protobuf.Struct) {}
+  rpc move_to_npc(google.protobuf.Struct)         returns (google.protobuf.Struct) {}
   rpc move_and_take_object(google.protobuf.Struct) returns (google.protobuf.Struct) {}
+  rpc move_and_take_puzzle_piece(google.protobuf.Struct) returns (google.protobuf.Struct) {}
   rpc turn_in_degree(google.protobuf.Struct)      returns (google.protobuf.Struct) {}
 
   // Object manipulation
-  rpc put_down_to_location(google.protobuf.Struct)                  returns (google.protobuf.Struct) {}
+  rpc put_down_sth(google.protobuf.Struct)                          returns (google.protobuf.Struct) {}
   rpc pour_water(google.protobuf.Struct)                            returns (google.protobuf.Struct) {}
   rpc slice_food(google.protobuf.Struct)                            returns (google.protobuf.Struct) {}
   rpc wash_hands(google.protobuf.Struct)                            returns (google.protobuf.Struct) {}

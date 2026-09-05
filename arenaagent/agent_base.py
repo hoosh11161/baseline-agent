@@ -18,7 +18,6 @@ from loguru import logger
 class AgentCfg:
     name: str = "agent"
     sleep_between_steps: float = 0.5
-    agent_body_asset_name: str = ""
     log_dir: str = "logs"
 
 class AgentBase(ABC):

@@ -1,5 +1,7 @@
 示例：
 
+以下示例中的 object_id 均为组合图右侧和当前可见物体列表中的映射 ID；动作参数必须原样使用该 ID。
+
 对于一个任务" 你有3分钟时间，请进行整理餐桌以供3个人用餐。"，一个合适的决策序列为：
 
 --- Obs Step 1
@@ -97,9 +99,10 @@
 [
   {
     "think": "我拿到了一个杯子，我要先把它放在桌子中间。",
-    "action": "put_down_sth_to_location",
+    "action": "put_down_sth",
     "parameters": {
-      "location": {'X': -348.715576171875, 'Y': 97.6534194946289, 'Z': 63.751265048980713}
+      "target_location": {'X': -348.715576171875, 'Y': 97.6534194946289, 'Z': 63.751265048980713},
+      "target_rotation": {"roll": 0, "yaw": 0, "pitch": 0}
     },
     "output": 0
   }
@@ -153,9 +156,9 @@
 [
   {
     "think": "我拿到了第二个杯子，我要把它放在桌子的右边。",
-    "action": "put_down_sth_to_location",
+    "action": "put_down_sth",
     "parameters": {
-      "location": {'X': -343, 'Y': 97, 'Z': 63.751265048980713}
+      "target_location": {'X': -343, 'Y': 97, 'Z': 63.751265048980713}
     },
     "output": 0
   }
@@ -209,9 +212,9 @@
 [
   {
     "think": "第二个杯子放好了，我现在要把第三个杯子放在桌子的左边。",
-    "action": "put_down_sth_to_location",
+    "action": "put_down_sth",
     "parameters": {
-      "location": {'X': -353, 'Y': 97, 'Z': 63.751265048980713}
+      "target_location": {'X': -353, 'Y': 97, 'Z': 63.751265048980713}
     },
     "output": 0
   }

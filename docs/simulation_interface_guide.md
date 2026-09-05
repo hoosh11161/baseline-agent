@@ -17,13 +17,33 @@
 
 | 接口 | 参数 | 返回 | 说明 |
 |---|---|---|---|
-| `acquire_first_person_image` | `character_id` | `image` | 获取第一视角 RGB 图像，通常为 base64 |
-| `acquire_first_person_segmantic_image` | `character_id` | `image` | 获取第一视角语义分割图 |
-| `fetch_first_person_visible_objects` | `character_id` | `objects` | 获取第一视角可见物体列表 |
-| `get_object_basic_info` | `object_id` | `dict` | 获取物体颜色、形状、位置等基础信息 |
-| `get_object_world_aabb` | `object_id` | `dict` | 获取物体世界坐标 AABB 包围盒 |
-| `get_object_id_by_name` | `name` | `object_id` 或 `None` | 根据物体名查找 object id |
-| `get_object_in_hand` | `character_id` | `(object_id, hand_idx)` 或 `None` | 查询角色当前手中物体 |
+| `acquire_first_person_perception` | `character_id`, `width=None`, `height=None` | `dict`：`image`, `objects` | 一次获取第一视角组合图和映射后的可见物体信息 |
+| `has_object_in_hand` | `character_id` | `(has_object, hand_idx)` | 查询是否持有物体以及被占用的手部索引；未持有时索引为 `None` |
+
+`acquire_first_person_perception` 的返回值结构如下：
+
+```python
+{
+    "image": "<base64 JPEG>",
+    "objects": [
+        {
+            "object_id": "1",
+            "color": "Green",
+            "shape": "Cuboid",
+            "place_location": {"X": 0.0, "Y": 0.0, "Z": 0.0},
+            "world_aabb": {
+                "min": {"X": 0.0, "Y": 0.0, "Z": 0.0},
+                "max": {"X": 0.0, "Y": 0.0, "Z": 0.0},
+            },
+        }
+    ],
+}
+```
+
+- `image` 左侧为第一视角 RGB，右侧为带数字 ID 标注的语义分割图。
+- `objects[*].object_id` 与右侧图中的数字标注一一对应，是后续物体动作唯一允许使用的映射 ID。客户端不会获得 TongSim SDK 的原始物体 ID，也不需要自行转换。
+- `width` 和 `height` 指最终组合图的宽高，必须同时传入。省略时不缩放，组合图宽度为摄像机宽度的 2 倍，高度等于摄像机高度。按 `spawn_character` 的默认摄像机 720×1000 计算，组合图为 1440×1000；`VLMAgent` 默认使用 1280×720 摄像机，对应组合图为 2560×720。
+- 旧的 `acquire_first_person_image`、`acquire_first_person_segmantic_image`、`fetch_first_person_visible_objects`、`get_object_basic_info`、`get_object_world_aabb`、`get_object_id_by_name` 和 `get_object_in_hand` 已移除。
 
 ## 视角控制
 
@@ -75,4 +95,4 @@
 | `target_location` / `location` | 三维坐标列表或字典 | `[100.0, 200.0, 50.0]` |
 | `rotation` / `put_rotation` | `roll`, `yaw`, `pitch` | `{"roll": 0, "yaw": 90, "pitch": 0}` |
 | `which_hand` | 整数 | `0` |
-| `object_id` | TongSim 原始物体 ID | `"BP_Cup_12"` |
+| `object_id` | `acquire_first_person_perception` 返回的映射 ID | `"1"` |
