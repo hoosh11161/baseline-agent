@@ -56,20 +56,11 @@ class TongSimInterface(ABC):
 
     通用约定：
         character_id 是 spawn_character 返回的角色 ID。
-        动作接口的物体 ID 均为服务端分配的映射 ID，不暴露 TongSim SDK 原始 ID。
+        动作接口的物体 ID 均为服务端分配的映射 ID。
         应使用同一角色感知结果中的映射 ID；角色销毁或服务端会话重置后不应复用。
-        which_hand 是服务端定义的手部索引，本接口不规定左右手编号。
-        坐标通常使用 [x, y, z] 序列；具体格式、距离单位和可达性由服务端约定。
 
     返回与错误：
         感知、持物查询、角色创建和关闭分别声明自己的返回形式。
-        其余接口在当前 TongSimGrpcClient 中返回服务端响应字典，不统一约定业务字段。
-        收到字典不等于动作成功，调用方应按服务端协议检查业务结果。
-        除 close 的清理流程外，当前 gRPC 实现不会在这些方法中拦截远程调用异常。
-
-    实现要求：
-        子类必须实现全部抽象方法；此处不执行动作，也不负责参数校验。
-        以下分类仅用于组织接口，不改变方法名、参数默认值或抽象方法契约。
     """
 
     # ------------------------------------------------------------------ #
@@ -103,10 +94,7 @@ class TongSimInterface(ABC):
             spawn_extra_camera: 是否请求创建额外摄像机，默认 False；具体用途由服务端定义。
 
         Returns:
-            角色 ID 字符串，供后续操作使用；当前 gRPC 实现在响应缺少该字段时返回空字符串。
-
-        Notes:
-            loc、rot 应传入可迭代序列；本模块的 Location、Rotation 数据类本身不可迭代。
+            角色 ID 字符串，供后续操作使用
         """
         raise NotImplementedError()
 
@@ -116,21 +104,12 @@ class TongSimInterface(ABC):
 
         Args:
             character_id: 待销毁角色 ID；None 在当前 gRPC 实现中发送为空字符串，销毁范围由服务端决定。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
-
-        Notes:
-            方法名 destory_character 保留历史拼写，以兼容已有调用方；请勿改为 destroy_character。
         """
         raise NotImplementedError()
 
     @abstractmethod
     def close(self) -> None:
         """关闭客户端连接并释放相关资源。
-
-        Returns:
-            None。
 
         Notes:
             当前 gRPC 实现停止心跳线程、尝试调用服务端 close，然后关闭通信通道。
@@ -163,8 +142,7 @@ class TongSimInterface(ABC):
         Notes:
             默认不缩放：组合图宽度为摄像机宽度的 2 倍，高度等于摄像机高度。
             按 spawn_character 默认摄像机 720×1000 计算，默认组合图为 1440×1000。
-            VLMAgent 默认使用 1280×720 摄像机，对应组合图为 2560×720。
-            当前 gRPC 客户端仅透传尺寸，尺寸合法性及错误响应由服务端处理。
+            如果VLMAgent 默认使用 1280×720 摄像机，对应组合图为 2560×720。
         """
         raise NotImplementedError()
 
@@ -177,10 +155,6 @@ class TongSimInterface(ABC):
 
         Returns:
             (has_object, hand_idx)：第一项为是否持物，第二项为手部索引或 None。
-
-        Notes:
-            不返回物体名称或物体 ID，也不枚举双手状态。
-            当前 gRPC 实现在响应缺少 has_object 时使用 False，缺少 hand_idx 时使用 None。
         """
         raise NotImplementedError()
 
@@ -200,9 +174,6 @@ class TongSimInterface(ABC):
             is_cancel: 是否请求取消该看向动作，默认 False。
             execute_immediately: 是否请求立即执行，默认 False；具体调度行为由服务端决定。
 
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
-
         Notes:
             取消动作时仍按当前签名传入 target_location；是否使用该坐标由服务端决定。
         """
@@ -216,9 +187,6 @@ class TongSimInterface(ABC):
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
             object_id: 目标物体在当前角色感知结果中的映射 ID。
             is_cancel: 是否请求取消该看向动作，默认 False。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
         """
         raise NotImplementedError()
 
@@ -231,9 +199,6 @@ class TongSimInterface(ABC):
             object_id: 被指向物体的映射 ID。
             is_cancel: 是否请求取消该指向动作，默认 False。
             which_hand: 手部索引，默认 0；左右手编号及有效取值由服务端定义。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
         """
         raise NotImplementedError()
 
@@ -249,9 +214,6 @@ class TongSimInterface(ABC):
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
             target_location: 仿真世界中的 XYZ 坐标，例如 [x, y, z]；单位由服务端约定。
             stop_distance: 到达目标附近时采用的停止距离，默认 0.5；单位及判定规则由服务端定义。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
         """
         raise NotImplementedError()
 
@@ -261,10 +223,7 @@ class TongSimInterface(ABC):
 
         Args:
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
-            distance: 前进距离；单位及是否支持负数由服务端定义。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
+            distance: 前进距离；支持负数。
         """
         raise NotImplementedError()
 
@@ -274,10 +233,7 @@ class TongSimInterface(ABC):
 
         Args:
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
-            degree: 转向角度，单位为度；正负方向及旋转轴由服务端定义。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
+            degree: 转向角度，单位为度；支持正负方向，正数为顺时针、负数为逆时针。
         """
         raise NotImplementedError()
 
@@ -288,9 +244,6 @@ class TongSimInterface(ABC):
         Args:
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
             object_id: 目标物体的映射 ID；具体到达位置由服务端确定。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
         """
         raise NotImplementedError()
 
@@ -301,9 +254,6 @@ class TongSimInterface(ABC):
         Args:
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
             name: 目标 NPC 的资产名称；服务端负责查找对应实体，不使用物体映射 ID。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
         """
         raise NotImplementedError()
 
@@ -325,27 +275,7 @@ class TongSimInterface(ABC):
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
             object_id: 待抓取物体的映射 ID。
             which_hand: 手部索引，默认 0；左右手编号及有效取值由服务端定义。
-            movable_object_ids: 历史兼容参数，默认 None；服务端忽略该参数，不用于限制可抓取物体。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def move_and_take_puzzle_piece(self, character_id, piece_object_id: str, which_hand: int = 0):
-        """移动并抓取指定拼图片。
-
-        Args:
-            character_id: 执行操作的角色 ID，由 spawn_character 返回。
-            piece_object_id: 待抓取拼图片的映射 ID。
-            which_hand: 手部索引，默认 0；左右手编号及有效取值由服务端定义。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
-
-        Notes:
-            这是拼图场景的专用抓取入口；具体抓取流程由服务端实现。
+            movable_object_ids: 历史兼容参数，不再有效。
         """
         raise NotImplementedError()
 
@@ -366,10 +296,6 @@ class TongSimInterface(ABC):
             target_rotation: 放置旋转，使用 Rotation（欧拉角，单位为度）；None 时由服务端自动调整朝向。
             auto_rotate: 是否请求自动调整物体朝向，默认 False；未指定 target_rotation 时服务端自动启用。
             force_locate: 是否请求强制放置到目标位置，默认 False；具体执行方式由服务端决定。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
-
         Notes:
             角色需要已持有物体；空手时服务端返回错误。
             此接口不接收 which_hand；需要显式指定手并先移动时，使用 move_and_put_down。
@@ -394,9 +320,6 @@ class TongSimInterface(ABC):
             which_hand: 手部索引，默认 0；左右手编号及有效取值由服务端定义。
             put_rotation: 可选物体放置旋转，使用 Rotation；None 时不指定，交由服务端处理。
 
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
-
         Notes:
             调用前指定手应已持有物体；坐标单位和动作可达性由服务端约定。
         """
@@ -404,18 +327,21 @@ class TongSimInterface(ABC):
 
     @abstractmethod
     def move_and_put_down_object_in_container(self, character_id, which_hand: int = 0):
-        """移动并将指定手中的物体放入容器。
+        """移动并将指定手中的物体放入最近容器。
 
         Args:
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
             which_hand: 手部索引，默认 0；左右手编号及有效取值由服务端定义。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
-
         Notes:
             调用前指定手应已持有物体。
             本接口没有容器 ID 或位置参数，容器选择和导航目标由服务端确定。
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def move_and_take_puzzle_piece(self, character_id, piece_object_id: str, which_hand: int = 0):
+        """移动并抓取指定拼图片。
+        无作用
         """
         raise NotImplementedError()
 
@@ -423,6 +349,20 @@ class TongSimInterface(ABC):
     # 六、生活动作与场景交互
     # ------------------------------------------------------------------ #
 
+    @abstractmethod
+    def speak_to_npc(self, character_id, target: str, content: str):
+        """请求角色向目标 NPC 说出指定内容。
+
+        Args:
+            character_id: 执行操作的角色 ID，由 spawn_character 返回。
+            target: 目标 NPC 标识字符串；具体名称或标识格式由服务端约定。
+            content: 向 NPC 表达的文本内容。
+
+        Notes:
+            返回值为动作响应字典；本接口不约定返回 NPC 的回复文本。
+        """
+        raise NotImplementedError()
+        
     @abstractmethod
     def pour_water(self, character_id, object_id: str, location, which_hand: int = 0):
         """请求角色执行倒水动作。
@@ -432,9 +372,6 @@ class TongSimInterface(ABC):
             object_id: 倒水动作关联物体的映射 ID；源容器或目标物体的具体语义由服务端定义。
             location: 倒水动作使用的 XYZ 位置；具体定位语义由服务端定义。
             which_hand: 手部索引，默认 0；左右手编号及有效取值由服务端定义。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
         """
         raise NotImplementedError()
 
@@ -446,9 +383,6 @@ class TongSimInterface(ABC):
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
             object_id: 切食物动作关联物体的映射 ID。
             location: 切食物动作使用的 XYZ 位置；具体定位语义由服务端定义。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
 
         Notes:
             工具、持物状态等动作前置条件由服务端判定。
@@ -462,9 +396,6 @@ class TongSimInterface(ABC):
         Args:
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
             faucet_object_id: 场景中目标水龙头的映射 ID。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
         """
         raise NotImplementedError()
 
@@ -475,9 +406,6 @@ class TongSimInterface(ABC):
         Args:
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
             faucet_object_id: 场景中目标水龙头的映射 ID。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
 
         Notes:
             角色应已持有待清洗物体；使用哪只手及动作前置条件由服务端判断。
@@ -492,9 +420,6 @@ class TongSimInterface(ABC):
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
             dirt_id: 目标污渍物体的映射 ID。
 
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
-
         Notes:
             所需工具及角色状态由服务端判定。
         """
@@ -507,9 +432,6 @@ class TongSimInterface(ABC):
         Args:
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
             object_id: 目标座椅等可坐物体的映射 ID；是否可坐由服务端判定。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
         """
         raise NotImplementedError()
 
@@ -520,27 +442,7 @@ class TongSimInterface(ABC):
         Args:
             character_id: 执行操作的角色 ID，由 spawn_character 返回。
 
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
-
         Notes:
             休息的姿态、时长及对当前动作的影响由服务端定义。
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def speak_to_npc(self, character_id, target: str, content: str):
-        """请求角色向目标 NPC 说出指定内容。
-
-        Args:
-            character_id: 执行操作的角色 ID，由 spawn_character 返回。
-            target: 目标 NPC 标识字符串；具体名称或标识格式由服务端约定。
-            content: 向 NPC 表达的文本内容。
-
-        Returns:
-            当前 gRPC 实现返回服务端响应字典；业务状态和字段以具体服务端为准。
-
-        Notes:
-            返回值为动作响应字典；本接口不约定返回 NPC 的回复文本。
         """
         raise NotImplementedError()
