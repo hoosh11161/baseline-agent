@@ -81,6 +81,31 @@ class JigsawFailureTongSim(FakeTongSim):
         }
 
 
+class JigsawHoldingTongSim(FakeTongSim):
+    def acquire_first_person_perception(self, character_id, width=None, height=None):
+        return {
+            "image": None,
+            "objects": [
+                {"object_id": "piece-a", "name": "piece", "position": [99, 25, 25]},
+                {"object_id": "reference", "name": "reference", "position": [10, 25, 25]},
+            ],
+        }
+
+    def has_object_in_hand(self, character_id):
+        return True, "piece-a"
+
+    def put_down_sth(
+        self,
+        character_id,
+        target_location,
+        target_rotation=None,
+        auto_rotate=False,
+        force_locate=False,
+    ):
+        self.calls.append(("put_down_sth", list(target_location)))
+        return {"result": "success"}
+
+
 class AgentIntegrationTests(unittest.TestCase):
     def make_agent(self, response_text: str) -> tuple[PreliminaryBaselineAgent, FakeTongSim, FakeClient]:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -257,6 +282,32 @@ class AgentIntegrationTests(unittest.TestCase):
         piece = agent._competition.strategy_context["pieces"][0]
         self.assertEqual(piece["rotation_attempt"], 1)
         self.assertEqual(piece["candidate_rotation"]["yaw"], 90.0)
+
+    def test_high_confidence_jigsaw_placement_bypasses_vlm(self) -> None:
+        agent, _, client = self.make_agent("not used")
+        tongsim = JigsawHoldingTongSim()
+        agent.tongsim = tongsim
+        subject = {
+            "task_id": "jigsaw-direct-1",
+            "task_type": "jigsaw",
+            "subject": "完成拼图",
+            "reference_bounding": [0, 100, 100, 0],
+            "rows": 2,
+            "columns": 2,
+            "piece_object_id": ["piece-a"],
+        }
+        agent._competition.ensure_episode(subject)
+        agent._competition.observe([{"object_id": "piece-a", "position": [99, 25, 25]}])
+        agent._competition.record_action(
+            {"action": "move_and_take_object", "parameters": {"object_id": "piece-a"}},
+            {"result": "success"},
+        )
+
+        result = agent.run_step(subject, {})
+
+        self.assertEqual(result["result"], "success")
+        self.assertEqual(client.calls, 0)
+        self.assertEqual(tongsim.calls, [("put_down_sth", [10.0, 75.0, 25.0])])
 
     def test_invalid_model_action_gets_one_bounded_repair(self) -> None:
         agent, tongsim, _ = self.make_agent("not used")

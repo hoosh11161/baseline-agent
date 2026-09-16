@@ -80,6 +80,23 @@ class JigsawSolverTests(unittest.TestCase):
         wrapped = JigsawSpatialSolver().infer(subject, objects, {"piece-a": 4})
         self.assertEqual(wrapped.pieces[0].candidate_rotation["yaw"], 0.0)
 
+    def test_verified_piece_becomes_occupied_board_evidence(self) -> None:
+        subject = {
+            "reference_bounding": [0, 100, 100, 0],
+            "rows": 2,
+            "columns": 2,
+            "piece_object_id": ["piece-a", "piece-b"],
+        }
+        objects = {
+            "reference": {"position": [10, 25, 25]},
+            "piece-a": {"position": [10, 75, 25]},
+            "piece-b": {"position": [99, 25, 25]},
+        }
+        plan = JigsawSpatialSolver().infer(subject, objects, completed_piece_ids={"piece-a"})
+        self.assertEqual(plan.missing_cells, [{"y": 25.0, "z": 75.0}, {"y": 75.0, "z": 75.0}])
+        self.assertEqual([piece.object_id for piece in plan.pieces], ["piece-b"])
+        self.assertEqual(plan.pieces[0].candidate_position, [10.0, 25.0, 75.0])
+
 
 if __name__ == "__main__":
     unittest.main()

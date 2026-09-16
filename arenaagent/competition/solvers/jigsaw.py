@@ -113,6 +113,7 @@ class JigsawSpatialSolver:
         subject: dict[str, Any],
         objects: dict[str, dict[str, Any]],
         retry_counts: dict[str, int] | None = None,
+        completed_piece_ids: set[str] | None = None,
     ) -> JigsawPlan:
         bounds = subject.get("reference_bounding")
         if not isinstance(bounds, (list, tuple)) or len(bounds) < BOUND_VALUE_COUNT:
@@ -125,10 +126,15 @@ class JigsawSpatialSolver:
 
         piece_ids = self._piece_ids(subject)
         piece_id_set = set(piece_ids)
+        completed_piece_ids = set(completed_piece_ids or ()) & piece_id_set
+        unplaced_piece_ids = piece_id_set - completed_piece_ids
         positions = {
             object_id: position
             for object_id, item in objects.items()
-            if object_id not in piece_id_set
+            # Movable pieces outside the board must not create false occupied
+            # cells. Once placement has been observation-verified, however,
+            # that same piece becomes legitimate board evidence.
+            if object_id not in unplaced_piece_ids
             if (position := _position(item)) is not None
             and y_lower <= position[1] <= y_upper
             and z_lower <= position[2] <= z_upper
@@ -167,6 +173,7 @@ class JigsawSpatialSolver:
                 rotation_attempt=max(int(retry_counts.get(value, 0)), 0),
             )
             for value in piece_ids
+            if value not in completed_piece_ids
         ]
         for piece, cell in zip(pieces, missing, strict=False):
             if x_plane is not None:
