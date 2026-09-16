@@ -37,12 +37,16 @@ class TaskStrategyRouter:
                     set(runtime.progress.completed_objects),
                 ).context()
             )
+        elif runtime.task_type == "npc":
+            runtime.set_strategy_context({"name": "npc_information_gain", **runtime.npc_memory.context()})
 
-    def propose_action(self, subject: Any, runtime: CompetitionRuntime) -> dict[str, Any] | None:
+    def propose_action(self, subject: Any, runtime: CompetitionRuntime) -> dict[str, Any] | None:  # noqa: PLR0911
         if runtime.metrics is None:
             return None
         if runtime.task_type == "jigsaw":
             return self._propose_jigsaw_placement(runtime)
+        if runtime.task_type == "npc":
+            return self._propose_npc_action(runtime)
         if runtime.task_type != "counting":
             return None
         scan_action = self.counting.next_scan_action()
@@ -119,4 +123,32 @@ class TaskStrategyRouter:
             },
             "output": 0,
             "expected_change": f"piece {held_piece} leaves the hand at the inferred empty cell",
+        }
+
+    @staticmethod
+    def _propose_npc_action(runtime: CompetitionRuntime) -> dict[str, Any] | None:
+        """Ask the highest-value evidence question, or submit a verified single answer."""
+        memory = runtime.npc_memory
+        answer = memory.final_answer()
+        if answer is not None:
+            runtime.set_strategy_context({"name": "npc_information_gain", **memory.context()})
+            return {
+                "think": "all required NPC facts are evidenced",
+                "action": "submit_answer",
+                "parameters": {},
+                "output": answer,
+                "expected_change": "official task service evaluates the evidence-derived answer",
+            }
+        candidate = memory.best_question()
+        if candidate is None:
+            return None
+        runtime.set_strategy_context(
+            {"name": "npc_information_gain", **memory.context(), "selected_question": candidate.context()}
+        )
+        return {
+            "think": f"request missing fact {candidate.fact_key}",
+            "action": "speak_to_npc",
+            "parameters": {"npc_name": candidate.npc, "message": candidate.question},
+            "output": 0,
+            "expected_change": f"NPC reply resolves or redirects {candidate.fact_key}",
         }

@@ -67,6 +67,39 @@ class TaskStrategyRouterTests(unittest.TestCase):
 
         self.assertIsNone(router.propose_action(subject, runtime))
 
+    def test_npc_router_asks_highest_value_missing_fact_without_vlm(self) -> None:
+        subject = {
+            "task_id": "npc-router-1",
+            "task_type": "npc",
+            "subject": "钥匙在哪里？",
+            "npc_asset_name": {"刘伟东": "npc_liu", "赵爷爷": "npc_zhao"},
+        }
+        runtime = CompetitionRuntime()
+        runtime.ensure_episode(subject)
+        runtime.npc_memory.ingest_fact("钥匙是赵爷爷的。")
+        router = TaskStrategyRouter()
+        router.observe(runtime, subject)
+        action = router.propose_action(subject, runtime)
+        self.assertEqual(action["action"], "speak_to_npc")
+        self.assertEqual(action["parameters"], {"npc_name": "赵爷爷", "message": "钥匙在哪里？"})
+        self.assertTrue(runtime.validate_action(action).valid)
+
+    def test_npc_router_submits_only_after_required_fact_is_known(self) -> None:
+        subject = {
+            "task_id": "npc-router-2",
+            "task_type": "npc",
+            "subject": "钥匙在哪里？",
+            "npc_asset_name": {"赵爷爷": "npc_zhao"},
+        }
+        runtime = CompetitionRuntime()
+        runtime.ensure_episode(subject)
+        runtime.npc_memory.record_exchange("赵爷爷", "钥匙在哪里？", "钥匙在餐桌上。")
+        router = TaskStrategyRouter()
+        router.observe(runtime, subject)
+        action = router.propose_action(subject, runtime)
+        self.assertEqual(action["action"], "submit_answer")
+        self.assertEqual(action["output"], "餐桌上")
+
 
 if __name__ == "__main__":
     unittest.main()

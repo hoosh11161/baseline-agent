@@ -748,6 +748,12 @@ class CompetitionRuntime:
                     "speak_to_npc requires a non-empty task-relevant question",
                     "NPC_REASONING",
                 )
+            if self.task_type == "npc" and not self.npc_memory.is_question_relevant(message):
+                return self._invalid(
+                    normalized,
+                    "NPC question does not target any currently missing required fact",
+                    "NPC_BAD_QUESTION",
+                )
 
         signature = self.action_signature(normalized)
         # solve_raven advances through a cached ranked candidate list internally,

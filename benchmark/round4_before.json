@@ -1,0 +1,28 @@
+{
+  "snapshot": "round4-upstream-baseline",
+  "commit": "2e391e52b9a6d84ea0c639ec678d6e0bd3d4d4d4",
+  "python": "3.12.14",
+  "unit_tests": {
+    "status": "PASS",
+    "passed": 76,
+    "failed": 0
+  },
+  "compileall": "PASS",
+  "offline_replay": {
+    "status": "PASS",
+    "verification_scope": "OFFLINE_PUBLIC_TRACE_GUARD_REPLAY",
+    "official_score_verified": false,
+    "mismatches": 0
+  },
+  "environment": {
+    "status": "REAL_TONGSIM_NOT_AVAILABLE",
+    "task_service_50051": "BLOCKED",
+    "tongsim_proxy_50060": "BLOCKED",
+    "model_credentials": "BLOCKED",
+    "official_release": "NOT_FOUND"
+  },
+  "real_benchmark": {
+    "status": "NOT_VERIFIED",
+    "reason": "TongSIM services, official release, and model credentials were not available; no score or success-rate claim is made."
+  }
+}
