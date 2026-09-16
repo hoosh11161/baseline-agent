@@ -397,6 +397,7 @@ class CompetitionRuntime:
                     "counted",
                     "confidence",
                     "current_object_id",
+                    "position_seen_step",
                 }
             }
             for object_id, item in self.objects.items()
@@ -435,6 +436,8 @@ class CompetitionRuntime:
             existing["confidence"] = 1.0 if len(source_ids) == 1 else 0.85
             existing.setdefault("first_seen_step", self.metrics.steps)
             existing["last_seen_step"] = self.metrics.steps
+            if position is not None:
+                existing["position_seen_step"] = self.metrics.steps
             existing["seen_count"] = int(existing.get("seen_count", 0)) + 1
             self.objects[canonical_id] = existing
         self.last_observation_diff = {
@@ -470,7 +473,8 @@ class CompetitionRuntime:
         return False
 
     def update_hand_state(self, has_object: bool) -> None:
-        self.progress.update_hand_state(bool(has_object))
+        observation_step = self.metrics.steps if self.metrics is not None else None
+        self.progress.update_hand_state(bool(has_object), self.objects, observation_step)
 
     def _secondary_object_match(self, raw: dict[str, Any], tolerance: float = 5.0) -> str | None:
         """Match a remapped perception ID only with strong public-position evidence."""
@@ -542,9 +546,7 @@ class CompetitionRuntime:
             "prompt_fingerprint",
             "runtime_config",
         }
-        self.run_metadata.update(
-            {key: _canonical(value) for key, value in metadata.items() if key in allowed}
-        )
+        self.run_metadata.update({key: _canonical(value) for key, value in metadata.items() if key in allowed})
 
     def set_strategy_context(self, context: dict[str, Any]) -> None:
         self.strategy_context = _canonical(context)
@@ -660,6 +662,31 @@ class CompetitionRuntime:
             distance = _as_number(params.get("distance", params.get("step")))
             if distance is None or distance <= 0:
                 return self._invalid(normalized, "distance must be a positive finite number", "ACTION_ERROR")
+        if "which_hand" in params and (
+            isinstance(params["which_hand"], bool)
+            or not isinstance(params["which_hand"], int)
+            or params["which_hand"] < 0
+        ):
+            return self._invalid(normalized, "which_hand must be a non-negative integer", "ACTION_ERROR")
+        if "stop_distance" in params:
+            stop_distance = _as_number(params["stop_distance"])
+            if stop_distance is None or stop_distance < 0:
+                return self._invalid(normalized, "stop_distance must be a non-negative finite number", "ACTION_ERROR")
+        for rotation_key in ("target_rotation", "put_rotation", "rotation"):
+            if rotation_key not in params or params[rotation_key] is None:
+                continue
+            rotation = params[rotation_key]
+            if not isinstance(rotation, dict) or not all(
+                _as_number(rotation.get(axis)) is not None for axis in ("roll", "yaw", "pitch")
+            ):
+                return self._invalid(
+                    normalized,
+                    f"{rotation_key} must contain finite roll, yaw, and pitch values",
+                    "ACTION_ERROR",
+                )
+        for boolean_key in ("auto_rotate", "force_locate", "is_cancel", "execute_immediately"):
+            if boolean_key in params and not isinstance(params[boolean_key], bool):
+                return self._invalid(normalized, f"{boolean_key} must be a boolean", "ACTION_ERROR")
         if name in {"turn_in_degree", "turn_around_to_degree"}:
             if _as_number(params.get("degree")) is None:
                 return self._invalid(normalized, "degree must be a finite number", "ACTION_ERROR")
@@ -680,6 +707,12 @@ class CompetitionRuntime:
                 return self._invalid(normalized, f"finish blocked: {reason}", "PREMATURE_FINISH")
 
         if name == "move_and_take_object":
+            if self.progress.pending_place:
+                return self._invalid(
+                    normalized,
+                    f"placement of {self.progress.pending_place!r} is awaiting observation verification",
+                    "PLANNING_ERROR",
+                )
             object_id = next(
                 (str(params[key]) for key in ("object_id", "object") if params.get(key) not in (None, "")), ""
             )
@@ -692,9 +725,7 @@ class CompetitionRuntime:
                 )
 
         if name in {"move_to_npc", "speak_to_npc"}:
-            target = str(
-                next((params[key] for key in ("npc_name", "npc", "target", "name") if params.get(key)), "")
-            )
+            target = str(next((params[key] for key in ("npc_name", "npc", "target", "name") if params.get(key)), ""))
             if not self.npc_memory.is_allowed(target):
                 return self._invalid(
                     normalized,
@@ -821,10 +852,14 @@ class CompetitionRuntime:
         blocked_failed_actions = sum(
             1 for count in self.failed_signatures.values() if count >= self.repeated_action_limit
         )
+        recent_failure_class = ""
+        if self.action_records and self.action_records[-1].get("failed"):
+            recent_failure_class = str(self.action_records[-1].get("failure_class") or "")
         recovery_active = (
             self.metrics.stuck_count > 0
             or self.metrics.repeated_actions > 0
             or blocked_failed_actions > 0
+            or recent_failure_class in {"MODEL_ERROR", "PERCEPTION_ERROR"}
         )
         return {
             "task_type": self.task_type,
@@ -849,8 +884,9 @@ class CompetitionRuntime:
                 "state": "RECOVERY" if recovery_active else "NORMAL",
                 "stuck": self.metrics.stuck_count > 0,
                 "blocked_failed_actions": blocked_failed_actions,
+                "recent_failure_class": recent_failure_class,
                 "required_change": (
-                    "discard the current micro-plan; observe again and choose a different legal subgoal/action"
+                    "preserve world state, refresh observation, and choose a different legal subgoal/action"
                     if recovery_active
                     else "none"
                 ),
@@ -862,7 +898,14 @@ class CompetitionRuntime:
 
     def _placement_candidates(self) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
+        held_object_id = self.progress.current_object
+        held_half_height = self._object_half_height(self.objects.get(held_object_id or "", {}))
+        excluded_ids = set(self.progress.expected_objects) | set(self.progress.completed_objects)
+        if held_object_id:
+            excluded_ids.add(held_object_id)
         for canonical_id in sorted(self.visible_canonical_ids):
+            if canonical_id in excluded_ids:
+                continue
             item = self.objects.get(canonical_id, {})
             current_id = str(item.get("current_object_id") or canonical_id)
             place_location = item.get("place_location")
@@ -883,10 +926,33 @@ class CompetitionRuntime:
                     values.append(round((low + high) / 2.0, 3))
                 top = _as_number(upper.get("Z", upper.get("z")))
                 if len(values) == VECTOR_DIMENSIONS - 1 and top is not None:
+                    height_adjustment = round((held_half_height or 0.0) + 1.0, 3)
                     candidates.append(
-                        {"object_id": current_id, "source": "world_aabb_top", "location": [*values, top]}
+                        {
+                            "object_id": current_id,
+                            "source": "world_aabb_top",
+                            "location": [*values, round(top + height_adjustment, 3)],
+                            "height_adjustment": height_adjustment,
+                        }
                     )
         return candidates
+
+    @staticmethod
+    def _object_half_height(item: dict[str, Any]) -> float | None:
+        bounds = item.get("world_aabb")
+        if (
+            not isinstance(bounds, dict)
+            or not isinstance(bounds.get("min"), dict)
+            or not isinstance(bounds.get("max"), dict)
+        ):
+            return None
+        lower = bounds["min"]
+        upper = bounds["max"]
+        low = _as_number(lower.get("Z", lower.get("z")))
+        high = _as_number(upper.get("Z", upper.get("z")))
+        if low is None or high is None or high < low:
+            return None
+        return (high - low) / 2.0
 
     def _count_summary(self) -> dict[str, dict[str, int]]:
         summary: dict[str, dict[str, int]] = {}

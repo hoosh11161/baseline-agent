@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import copy
@@ -301,9 +301,7 @@ class VLMAgent(AgentBase):
                 self._competition.record_llm_call(getattr(repaired_response, "token_usage", None))
                 if not repaired_error:
                     repaired_json = extract_last_json_from_text(repaired_text)
-                    repaired_action = self._normalize_action_parameters(
-                        self._parse_action_from_response(repaired_json)
-                    )
+                    repaired_action = self._normalize_action_parameters(self._parse_action_from_response(repaired_json))
                     repaired_validation = self._competition.validate_action(
                         repaired_action, object_in_hand=bool(object_in_hand)
                     )
@@ -442,14 +440,19 @@ class VLMAgent(AgentBase):
     def _append_history_messages(self, messages: list[dict[str, Any]]) -> None:
         if not messages:
             return
-        self.history_messages.extend(messages)
+        # The current frame is always attached to the new user turn. Retaining
+        # base64 screenshots in old turns multiplies visual tokens and can make
+        # the planner attend to stale object IDs, so history keeps text only.
+        self.history_messages.extend(self._strip_image_urls(messages))
         self._trim_history_messages()
 
     def _trim_history_messages(self) -> list[dict[str, Any]]:
         max_history_messages = max(int(getattr(self.cfg, "max_history_messages", 15) or 0), 0)
         if max_history_messages == 0:
             if self.history_messages:
-                logger.debug("History messages disabled by config, clearing {} cached messages", len(self.history_messages))
+                logger.debug(
+                    "History messages disabled by config, clearing {} cached messages", len(self.history_messages)
+                )
                 self.history_messages = []
             return self.history_messages
 

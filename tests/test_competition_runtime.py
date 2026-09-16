@@ -132,6 +132,40 @@ class CompetitionRuntimeTests(unittest.TestCase):
         )
         self.assertFalse(decision.valid)
 
+    def test_invalid_optional_action_parameters_are_blocked(self) -> None:
+        runtime = self.make_runtime()
+        runtime.ensure_episode({"task_type": "tidyroom", "subject": "整理"})
+        runtime.observe([{"object_id": "7", "name": "cup"}])
+        invalid_actions = [
+            {"action": "move_and_take_object", "parameters": {"object_id": "7", "which_hand": "left"}},
+            {
+                "action": "put_down_sth",
+                "parameters": {"target_location": [1, 2, 3], "target_rotation": {"yaw": 90}},
+            },
+            {
+                "action": "put_down_sth",
+                "parameters": {"target_location": [1, 2, 3], "force_locate": "true"},
+            },
+            {
+                "action": "move_to_location",
+                "parameters": {"target_location": [1, 2, 3], "stop_distance": -1},
+            },
+        ]
+        for action in invalid_actions:
+            decision = runtime.validate_action(action, object_in_hand=True)
+            self.assertFalse(decision.valid, action)
+            self.assertEqual(decision.failure_class, "ACTION_ERROR")
+
+    def test_model_failure_activates_recovery_context_without_losing_state(self) -> None:
+        runtime = self.make_runtime()
+        runtime.ensure_episode({"task_type": "tidyroom", "subject": "整理"})
+        runtime.observe([{"object_id": "7", "name": "cup"}])
+        runtime.record_step_failure("MODEL_ERROR", "timeout", stage="model_invoke")
+        context = runtime.prompt_context()
+        self.assertEqual(context["recovery"]["state"], "RECOVERY")
+        self.assertEqual(context["recovery"]["recent_failure_class"], "MODEL_ERROR")
+        self.assertIn("7", runtime.objects)
+
     def test_failure_artifacts_are_written(self) -> None:
         runtime = self.make_runtime()
         runtime.ensure_episode({"task_id": "episode-1", "task_type": "counting", "subject": "计数"})

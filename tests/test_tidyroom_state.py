@@ -8,9 +8,7 @@ from arenaagent.competition.runtime import CompetitionRuntime
 class TidyRoomStateTests(unittest.TestCase):
     def make_runtime(self) -> CompetitionRuntime:
         runtime = CompetitionRuntime(repeated_action_limit=2)
-        runtime.ensure_episode(
-            {"task_type": "tidyroom", "subject": "整理房间", "movable_object_id": ["7"]}
-        )
+        runtime.ensure_episode({"task_type": "tidyroom", "subject": "整理房间", "movable_object_id": ["7"]})
         runtime.observe([{"object_id": "7", "name": "cup"}])
         return runtime
 
@@ -27,8 +25,77 @@ class TidyRoomStateTests(unittest.TestCase):
         runtime.record_action(put, {"result": "success"})
         self.assertEqual(runtime.progress.context()["states"]["7"], "PLACED")
         runtime.update_hand_state(False)
+        self.assertEqual(runtime.progress.context()["states"]["7"], "PLACED")
+        self.assertEqual(runtime.progress.context()["remaining_objects"], ["7"])
+        runtime.observe([{"object_id": "7", "name": "cup", "position": [1, 2, 3]}])
+        runtime.update_hand_state(False)
         self.assertEqual(runtime.progress.context()["states"]["7"], "VERIFIED")
         self.assertEqual(runtime.progress.context()["remaining_objects"], [])
+
+    def test_wrong_placement_position_is_not_verified(self) -> None:
+        runtime = self.make_runtime()
+        take = {"action": "move_and_take_object", "parameters": {"object_id": "7"}, "output": 0}
+        runtime.record_action(take, {"result": "success"})
+        runtime.update_hand_state(True)
+        put = {"action": "put_down_sth", "parameters": {"target_location": [1, 2, 3]}, "output": 0}
+        runtime.record_action(put, {"result": "success"})
+        runtime.observe([{"object_id": "7", "name": "cup", "position": [100, 100, 100]}])
+        runtime.update_hand_state(False)
+        context = runtime.progress.context()
+        self.assertEqual(context["states"]["7"], "DISCOVERED")
+        self.assertEqual(context["remaining_objects"], ["7"])
+        self.assertEqual(context["retry_count"], {"7": 1})
+
+    def test_stale_pre_pick_position_is_not_placement_evidence(self) -> None:
+        runtime = self.make_runtime()
+        runtime.observe([{"object_id": "7", "name": "cup", "position": [1, 2, 3]}])
+        runtime.record_action(
+            {"action": "move_and_take_object", "parameters": {"object_id": "7"}, "output": 0},
+            {"result": "success"},
+        )
+        runtime.update_hand_state(True)
+        runtime.record_action(
+            {"action": "put_down_sth", "parameters": {"target_location": [1, 2, 3]}, "output": 0},
+            {"result": "success"},
+        )
+        runtime.observe([{"object_id": "7", "name": "cup"}])
+        runtime.update_hand_state(False)
+        context = runtime.progress.context()
+        self.assertEqual(context["states"]["7"], "PLACED")
+        self.assertEqual(context["remaining_objects"], ["7"])
+        runtime.observe([{"object_id": "8", "name": "book"}])
+        next_pick = runtime.validate_action(
+            {"action": "move_and_take_object", "parameters": {"object_id": "8"}, "output": 0}
+        )
+        self.assertFalse(next_pick.valid)
+        self.assertEqual(next_pick.failure_class, "PLANNING_ERROR")
+
+    def test_surface_candidate_excludes_movable_objects_and_adjusts_height(self) -> None:
+        runtime = self.make_runtime()
+        runtime.observe(
+            [
+                {
+                    "object_id": "7",
+                    "name": "cup",
+                    "world_aabb": {"min": {"X": 0, "Y": 0, "Z": 0}, "max": {"X": 2, "Y": 2, "Z": 2}},
+                },
+                {
+                    "object_id": "table",
+                    "name": "table",
+                    "world_aabb": {"min": {"X": 0, "Y": 0, "Z": 0}, "max": {"X": 20, "Y": 20, "Z": 10}},
+                },
+            ]
+        )
+        runtime.record_action(
+            {"action": "move_and_take_object", "parameters": {"object_id": "7"}, "output": 0},
+            {"result": "success"},
+        )
+        runtime.update_hand_state(True)
+        candidates = runtime.prompt_context()["placement_candidates"]
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["object_id"], "table")
+        self.assertEqual(candidates[0]["location"], [10.0, 10.0, 12.0])
+        self.assertEqual(candidates[0]["height_adjustment"], 2.0)
 
     def test_held_object_motion_is_explicit(self) -> None:
         runtime = self.make_runtime()

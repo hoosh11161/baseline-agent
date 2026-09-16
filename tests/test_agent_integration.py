@@ -88,8 +88,7 @@ class AgentIntegrationTests(unittest.TestCase):
 
     def test_hallucinated_id_never_reaches_tongsim(self) -> None:
         agent, tongsim, client = self.make_agent(
-            '[{"think":"guess","action":"move_and_take_object",'
-            '"parameters":{"object_id":"999"},"output":0}]'
+            '[{"think":"guess","action":"move_and_take_object","parameters":{"object_id":"999"},"output":0}]'
         )
         result = agent.run_step({"task_type": "tidyroom", "subject": "整理房间"}, {})
         self.assertEqual(client.calls, 2)
@@ -115,10 +114,28 @@ class AgentIntegrationTests(unittest.TestCase):
         self.assertIn("unique_objects_seen", user_text)
         self.assertNotIn("{self.competition_state}", user_text)
 
+    def test_history_drops_stale_base64_images_but_keeps_text(self) -> None:
+        agent, _, _ = self.make_agent("not used")
+        agent._append_history_messages(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}},
+                        {"type": "text", "text": "current evidence"},
+                    ],
+                },
+                {"role": "assistant", "content": "one action"},
+            ]
+        )
+        serialized = str(agent.history_messages)
+        self.assertNotIn("base64", serialized)
+        self.assertNotIn("image_url", serialized)
+        self.assertIn("current evidence", serialized)
+
     def test_visible_id_reaches_tongsim(self) -> None:
         agent, tongsim, _ = self.make_agent(
-            '[{"think":"visible","action":"move_and_take_object",'
-            '"parameters":{"object_id":"1"},"output":0}]'
+            '[{"think":"visible","action":"move_and_take_object","parameters":{"object_id":"1"},"output":0}]'
         )
         result = agent.run_step({"task_type": "tidyroom", "subject": "整理房间"}, {})
         self.assertEqual(result["result"], "success")
@@ -133,8 +150,7 @@ class AgentIntegrationTests(unittest.TestCase):
 
     def test_official_evaluation_writes_verified_episode(self) -> None:
         agent, _, _ = self.make_agent(
-            '[{"think":"visible","action":"move_and_take_object",'
-            '"parameters":{"object_id":"1"},"output":0}]'
+            '[{"think":"visible","action":"move_and_take_object","parameters":{"object_id":"1"},"output":0}]'
         )
         agent.run_step({"task_id": "verified-1", "task_type": "tidyroom", "subject": "整理房间"}, {})
         agent._on_subject_evaluated({"success": True, "score": 1})
@@ -196,9 +212,7 @@ class AgentIntegrationTests(unittest.TestCase):
         self.assertEqual(tongsim.calls, [("move_and_take_object", "1")])
 
     def test_new_episode_clears_previous_action_memory(self) -> None:
-        agent, _, _ = self.make_agent(
-            '[{"action":"move_and_take_object","parameters":{"object_id":"1"},"output":0}]'
-        )
+        agent, _, _ = self.make_agent('[{"action":"move_and_take_object","parameters":{"object_id":"1"},"output":0}]')
         agent.run_step({"task_id": "episode-a", "task_type": "tidyroom", "subject": "整理房间"}, {})
         self.assertTrue(agent._action_histories)
         agent.run_step({"task_id": "episode-b", "task_type": "tidyroom", "subject": "整理房间"}, {})
