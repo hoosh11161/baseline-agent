@@ -97,6 +97,68 @@ class JigsawSolverTests(unittest.TestCase):
         self.assertEqual([piece.object_id for piece in plan.pieces], ["piece-b"])
         self.assertEqual(plan.pieces[0].candidate_position, [10.0, 25.0, 75.0])
 
+    def test_multiple_pieces_use_global_assignment_from_public_targets(self) -> None:
+        subject = {
+            "reference_bounding": [0, 100, 100, 0],
+            "rows": 2,
+            "columns": 2,
+            "piece_object_id": ["piece-a", "piece-b"],
+        }
+        objects = {
+            "reference-1": {"position": [10, 25, 25]},
+            "reference-2": {"position": [10, 75, 75]},
+            "piece-a": {"position": [99, 0, 0], "target_position": [10, 25, 75]},
+            "piece-b": {"position": [99, 0, 0], "target_position": [10, 75, 25]},
+        }
+        plan = JigsawSpatialSolver().infer(subject, objects)
+        self.assertEqual(plan.pieces[0].candidate_position, [10.0, 25.0, 75.0])
+        self.assertEqual(plan.pieces[1].candidate_position, [10.0, 75.0, 25.0])
+        self.assertEqual(plan.assignment_confidence, 0.9)
+        self.assertEqual(plan.pieces[0].assignment_evidence, "public_target_position")
+
+    def test_ambiguous_multi_piece_assignment_is_not_high_confidence(self) -> None:
+        subject = {
+            "reference_bounding": [0, 100, 100, 0],
+            "rows": 2,
+            "columns": 2,
+            "piece_object_id": ["piece-a", "piece-b"],
+        }
+        objects = {
+            "reference-1": {"position": [10, 25, 25]},
+            "reference-2": {"position": [10, 75, 75]},
+        }
+        plan = JigsawSpatialSolver().infer(subject, objects)
+        self.assertEqual(plan.assignment_confidence, 0.55)
+        self.assertEqual([piece.confidence for piece in plan.pieces], [0.55, 0.55])
+        self.assertEqual([len(piece.candidate_cells) for piece in plan.pieces], [2, 2])
+
+    def test_public_rotation_hint_is_snapped_to_legal_rotation(self) -> None:
+        subject = {
+            "reference_bounding": [0, 100, 100, 0],
+            "rows": 2,
+            "columns": 2,
+            "piece_object_id": ["piece-a"],
+        }
+        objects = {
+            "reference-1": {"position": [10, 25, 25]},
+            "reference-2": {"position": [10, 75, 25]},
+            "reference-3": {"position": [10, 25, 75]},
+            "piece-a": {"position": [99, 0, 0], "target_rotation": {"yaw": 178}},
+        }
+        plan = JigsawSpatialSolver().infer(subject, objects)
+        self.assertEqual(plan.pieces[0].candidate_rotation["yaw"], 180.0)
+        self.assertEqual(plan.pieces[0].rotation_source, "public_rotation_hint")
+
+    def test_off_center_reference_does_not_claim_occupied_cell(self) -> None:
+        subject = {
+            "reference_bounding": [0, 100, 100, 0],
+            "rows": 2,
+            "columns": 2,
+            "piece_object_id": [],
+        }
+        plan = JigsawSpatialSolver().infer(subject, {"off-grid": {"position": [10, 50, 50]}})
+        self.assertEqual(len(plan.missing_cells), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

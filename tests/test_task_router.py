@@ -21,7 +21,9 @@ class TaskStrategyRouterTests(unittest.TestCase):
         runtime.ensure_episode(subject)
         runtime.observe(
             [
-                {"object_id": "reference", "position": [10, 25, 25]},
+                {"object_id": "reference-1", "position": [10, 25, 25]},
+                {"object_id": "reference-2", "position": [10, 75, 25]},
+                {"object_id": "reference-3", "position": [10, 25, 75]},
                 {"object_id": "piece-a", "position": [99, 25, 25]},
             ]
         )
@@ -37,7 +39,7 @@ class TaskStrategyRouterTests(unittest.TestCase):
 
         self.assertIsNotNone(action)
         self.assertEqual(action["action"], "put_down_sth")
-        self.assertEqual(action["parameters"]["target_location"], [10.0, 75.0, 25.0])
+        self.assertEqual(action["parameters"]["target_location"], [10.0, 75.0, 75.0])
         self.assertEqual(
             action["parameters"]["target_rotation"],
             {"roll": 0.0, "yaw": 0.0, "pitch": 0.0},

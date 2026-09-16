@@ -97,7 +97,9 @@ class JigsawHoldingTongSim(FakeTongSim):
             "image": None,
             "objects": [
                 {"object_id": "piece-a", "name": "piece", "position": [99, 25, 25]},
-                {"object_id": "reference", "name": "reference", "position": [10, 25, 25]},
+                {"object_id": "reference-1", "name": "reference", "position": [10, 25, 25]},
+                {"object_id": "reference-2", "name": "reference", "position": [10, 75, 25]},
+                {"object_id": "reference-3", "name": "reference", "position": [10, 25, 75]},
             ],
         }
 
@@ -328,7 +330,7 @@ class AgentIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result["result"], "success")
         self.assertEqual(client.calls, 0)
-        self.assertEqual(tongsim.calls, [("put_down_sth", [10.0, 75.0, 25.0])])
+        self.assertEqual(tongsim.calls, [("put_down_sth", [10.0, 75.0, 75.0])])
 
     def test_invalid_model_action_gets_one_bounded_repair(self) -> None:
         agent, tongsim, _ = self.make_agent("not used")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from functools import lru_cache
 from statistics import median
 from typing import Any
 
@@ -9,6 +10,7 @@ VECTOR_SIZE = 3
 MIN_GRID_CENTERS = 2
 BOUND_VALUE_COUNT = 4
 ROTATION_CANDIDATES = (0, 90, 180, 270)
+MAX_EXACT_ASSIGNMENT_CELLS = 10
 
 
 def _number(value: Any) -> float | None:
@@ -72,6 +74,10 @@ class PieceState:
     placed: bool = False
     confidence: float = 0.0
     rotation_attempt: int = 0
+    candidate_cells: list[list[float]] = field(default_factory=list)
+    assignment_score: float = 0.0
+    assignment_evidence: str = "none"
+    rotation_source: str = "bounded_retry"
 
 
 @dataclass(slots=True)
@@ -81,6 +87,8 @@ class JigsawPlan:
     missing_cells: list[dict[str, float]] = field(default_factory=list)
     pieces: list[PieceState] = field(default_factory=list)
     confidence: float = 0.0
+    assignment_confidence: float = 0.0
+    score_matrix: list[list[float]] = field(default_factory=list)
     reason: str = ""
 
     def context(self) -> dict[str, Any]:
@@ -98,17 +106,23 @@ class JigsawPlan:
                     "placed": piece.placed,
                     "confidence": piece.confidence,
                     "rotation_attempt": piece.rotation_attempt,
+                    "candidate_cells": piece.candidate_cells,
+                    "assignment_score": piece.assignment_score,
+                    "assignment_evidence": piece.assignment_evidence,
+                    "rotation_source": piece.rotation_source,
                 }
                 for piece in self.pieces
             ],
             "candidate_yaw_degrees": list(ROTATION_CANDIDATES),
             "confidence": self.confidence,
+            "assignment_confidence": self.assignment_confidence,
+            "score_matrix": self.score_matrix,
             "reason": self.reason,
         }
 
 
 class JigsawSpatialSolver:
-    def infer(
+    def infer(  # noqa: PLR0915
         self,
         subject: dict[str, Any],
         objects: dict[str, dict[str, Any]],
@@ -154,10 +168,14 @@ class JigsawSpatialSolver:
                 reason="not enough public coordinates to infer a grid",
             )
 
-        occupied = {
-            (self._nearest(position[1], y_centers), self._nearest(position[2], z_centers))
-            for position in positions.values()
-        }
+        y_tolerance = self._axis_tolerance(y_centers, y_lower, y_upper)
+        z_tolerance = self._axis_tolerance(z_centers, z_lower, z_upper)
+        occupied: set[tuple[float, float]] = set()
+        for position in positions.values():
+            nearest_y = self._nearest(position[1], y_centers)
+            nearest_z = self._nearest(position[2], z_centers)
+            if abs(position[1] - nearest_y) <= y_tolerance and abs(position[2] - nearest_z) <= z_tolerance:
+                occupied.add((nearest_y, nearest_z))
         x_plane = round(median(position[0] for position in positions.values()), 3) if positions else None
         missing = [
             {"y": y_value, "z": z_value}
@@ -175,26 +193,153 @@ class JigsawSpatialSolver:
             for value in piece_ids
             if value not in completed_piece_ids
         ]
-        for piece, cell in zip(pieces, missing, strict=False):
-            if x_plane is not None:
-                piece.candidate_position = [x_plane, cell["y"], cell["z"]]
-                yaw = ROTATION_CANDIDATES[piece.rotation_attempt % len(ROTATION_CANDIDATES)]
-                piece.candidate_rotation = {"roll": 0.0, "yaw": float(yaw), "pitch": 0.0}
-                piece.confidence = 0.8 if rows and columns else 0.55
+        cells = [[x_plane, cell["y"], cell["z"]] for cell in missing] if x_plane is not None else []
+        score_matrix: list[list[float]] = []
+        evidence: list[str] = []
+        for piece in pieces:
+            scores, source = self._piece_cell_scores(piece, cells, objects.get(piece.object_id, {}), subject)
+            score_matrix.append(scores)
+            evidence.append(source)
+            piece.candidate_cells = [cell for _, cell in sorted(zip(scores, cells, strict=False), reverse=True)]
+        assignment = self._best_assignment(score_matrix)
+        explicit_assignment = bool(pieces) and all(source == "public_target_position" for source in evidence)
+        single_unambiguous = len(pieces) == 1 and len(cells) == 1
+        assignment_confidence = 0.9 if explicit_assignment else 0.85 if single_unambiguous else 0.55
+        for piece_index, cell_index in enumerate(assignment):
+            if piece_index >= len(pieces) or cell_index >= len(cells):
+                continue
+            piece = pieces[piece_index]
+            piece.candidate_position = cells[cell_index]
+            piece.assignment_score = round(score_matrix[piece_index][cell_index], 6)
+            piece.assignment_evidence = evidence[piece_index]
+            rotation, rotation_source = self._rotation_candidate(
+                objects.get(piece.object_id, {}), piece.rotation_attempt
+            )
+            piece.candidate_rotation = rotation
+            piece.rotation_source = rotation_source
+            grid_confidence = 0.9 if rows and columns else 0.6
+            piece.confidence = min(grid_confidence, assignment_confidence)
         enough_observed_centers = len(observed_y) >= MIN_GRID_CENTERS and len(observed_z) >= MIN_GRID_CENTERS
         confidence = 0.9 if rows and columns else 0.6 if enough_observed_centers else 0.35
+        assignment_reason = (
+            "piece targets were assigned globally from public target positions"
+            if explicit_assignment
+            else "the single remaining piece/cell pair is unambiguous"
+            if single_unambiguous
+            else "multiple assignments remain ambiguous; candidates are exposed but direct placement is disabled"
+        )
         return JigsawPlan(
             y_centers=y_centers,
             z_centers=z_centers,
             missing_cells=missing,
             pieces=pieces,
             confidence=confidence,
+            assignment_confidence=assignment_confidence,
+            score_matrix=[[round(value, 6) for value in row] for row in score_matrix],
             reason=(
-                "grid and placement plane inferred from reference bounds and public object positions"
+                f"grid and placement plane inferred from public evidence; {assignment_reason}"
                 if x_plane is not None
                 else "grid inferred, but no public X-plane evidence exists for a safe placement coordinate"
             ),
         )
+
+    @staticmethod
+    def _axis_tolerance(centers: list[float], lower: float, upper: float) -> float:
+        gaps = [right - left for left, right in zip(centers, centers[1:], strict=False) if right > left]
+        if gaps:
+            return max(min(gaps) * 0.35, 1.0)
+        return max((upper - lower) * 0.1, 1.0)
+
+    @staticmethod
+    def _public_target_position(
+        piece: PieceState, item: dict[str, Any], subject: dict[str, Any]
+    ) -> list[float] | None:
+        for key in ("target_position", "target_location", "goal_position", "expected_position"):
+            value = item.get(key)
+            if isinstance(value, dict):
+                lowered = {str(name).lower(): raw for name, raw in value.items()}
+                numbers = [_number(lowered.get(axis)) for axis in ("x", "y", "z")]
+            elif isinstance(value, (list, tuple)) and len(value) >= VECTOR_SIZE:
+                numbers = [_number(raw) for raw in value[:VECTOR_SIZE]]
+            else:
+                continue
+            if all(number is not None for number in numbers):
+                return [float(number) for number in numbers]
+        for key in ("piece_target_locations", "piece_targets", "target_by_piece"):
+            mapping = subject.get(key)
+            if isinstance(mapping, dict):
+                value = mapping.get(piece.object_id)
+                if isinstance(value, (list, tuple)) and len(value) >= VECTOR_SIZE:
+                    numbers = [_number(raw) for raw in value[:VECTOR_SIZE]]
+                    if all(number is not None for number in numbers):
+                        return [float(number) for number in numbers]
+        return None
+
+    @classmethod
+    def _piece_cell_scores(
+        cls,
+        piece: PieceState,
+        cells: list[list[float]],
+        item: dict[str, Any],
+        subject: dict[str, Any],
+    ) -> tuple[list[float], str]:
+        target = cls._public_target_position(piece, item, subject)
+        if target is not None:
+            return [1.0 / (1.0 + math.dist(target, cell)) for cell in cells], "public_target_position"
+        if piece.current_position is not None:
+            return [
+                0.25 / (1.0 + math.dist(piece.current_position[1:], cell[1:]))
+                for cell in cells
+            ], "weak_current_position"
+        return [0.0 for _ in cells], "no_piece_specific_evidence"
+
+    @staticmethod
+    def _best_assignment(score_matrix: list[list[float]]) -> list[int]:
+        if not score_matrix or not score_matrix[0]:
+            return []
+        piece_count = len(score_matrix)
+        cell_count = len(score_matrix[0])
+        assigned_count = min(piece_count, cell_count)
+        if cell_count > MAX_EXACT_ASSIGNMENT_CELLS:
+            return list(range(assigned_count))
+
+        @lru_cache(maxsize=None)
+        def solve(piece_index: int, used_mask: int) -> tuple[float, tuple[int, ...]]:
+            if piece_index >= assigned_count:
+                return 0.0, ()
+            best_score = -math.inf
+            best_cells: tuple[int, ...] = ()
+            for cell_index in range(cell_count):
+                if used_mask & (1 << cell_index):
+                    continue
+                future_score, future_cells = solve(piece_index + 1, used_mask | (1 << cell_index))
+                score = score_matrix[piece_index][cell_index] + future_score
+                candidate = (cell_index, *future_cells)
+                if score > best_score or (math.isclose(score, best_score) and candidate < best_cells):
+                    best_score = score
+                    best_cells = candidate
+            return best_score, best_cells
+
+        return list(solve(0, 0)[1])
+
+    @staticmethod
+    def _rotation_candidate(item: dict[str, Any], attempt: int) -> tuple[dict[str, float], str]:
+        for key in ("target_rotation", "rotation_hint", "expected_rotation"):
+            value = item.get(key)
+            if not isinstance(value, dict):
+                continue
+            lowered = {str(name).lower(): raw for name, raw in value.items()}
+            yaw = _number(lowered.get("yaw"))
+            if yaw is None:
+                continue
+            normalized = yaw % 360
+            selected = min(
+                ROTATION_CANDIDATES,
+                key=lambda candidate: min(abs(normalized - candidate), 360 - abs(normalized - candidate)),
+            )
+            return {"roll": 0.0, "yaw": float(selected), "pitch": 0.0}, "public_rotation_hint"
+        yaw = ROTATION_CANDIDATES[max(int(attempt), 0) % len(ROTATION_CANDIDATES)]
+        return {"roll": 0.0, "yaw": float(yaw), "pitch": 0.0}, "bounded_retry"
 
     @staticmethod
     def _dimension(subject: dict[str, Any], *keys: str) -> int | None:
