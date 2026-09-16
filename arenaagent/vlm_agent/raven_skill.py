@@ -15,8 +15,12 @@ from typing import Any
 from loguru import logger
 from PIL import Image
 
-from arenaagent.competition.solvers.raven import RavenDecision
+from arenaagent.competition.solvers.raven import RavenDecision, RavenRuleVerifier, RavenVerification
 from arenaagent.vlm_agent.skills.raven import crop_group_image_to_subplots, solve_raven
+
+RAVEN_GROUP_COUNT = 3
+RAVEN_PROBLEM_COUNT = 8
+RAVEN_GROUP_PANEL_COUNT = 16
 
 
 def _fail(agent: Any, error: str) -> dict[str, Any]:
@@ -58,7 +62,44 @@ def run_raven_inference_details(
         except Exception:
             continue
     scores = [float(value) for value in raw_scores] if isinstance(raw_scores, list) else []
-    return RavenDecision.from_ranked(normalized, scores)
+    verifications = _verify_raven_rules(image_list)
+    normalized, scores = _rerank_with_rule_evidence(normalized, scores, verifications)
+    return RavenDecision.from_ranked(normalized, scores, rule_verification=verifications)
+
+
+def _verify_raven_rules(image_list: list[list[Image.Image]]) -> list[RavenVerification]:
+    verifier = RavenRuleVerifier()
+    verifications: list[RavenVerification] = []
+    for group in image_list[:RAVEN_GROUP_COUNT]:
+        verification = (
+            verifier.verify(group[:RAVEN_PROBLEM_COUNT], group[RAVEN_PROBLEM_COUNT:RAVEN_GROUP_PANEL_COUNT])
+            if len(group) >= RAVEN_GROUP_PANEL_COUNT
+            else None
+        )
+        verifications.append(verification or RavenVerification([0.0] * RAVEN_PROBLEM_COUNT))
+    return verifications
+
+
+def _rerank_with_rule_evidence(
+    candidates: list[list[int]],
+    scores: list[float],
+    verifications: list[RavenVerification],
+) -> tuple[list[list[int]], list[float]]:
+    if len(scores) != len(candidates) or not any(item.hypotheses for item in verifications):
+        return candidates, scores
+    combined: list[tuple[float, list[int]]] = []
+    for candidate, model_score in zip(candidates, scores, strict=False):
+        rule_values = [
+            verification.candidate_scores[answer - 1]
+            for answer, verification in zip(candidate, verifications, strict=False)
+            if 0 < answer <= len(verification.candidate_scores) and verification.hypotheses
+        ]
+        rule_score = sum(rule_values) / len(rule_values) if rule_values else 0.0
+        combined.append((float(model_score) * (0.75 + 0.25 * rule_score), candidate))
+    combined.sort(key=lambda item: (-item[0], item[1]))
+    total = sum(score for score, _ in combined)
+    reranked_scores = [score / total for score, _ in combined] if total > 0 else [score for score, _ in combined]
+    return [candidate for _, candidate in combined], reranked_scores
 
 
 def run_raven_inference(image_list: list[list[Image.Image]], structure: list[Any]) -> list[list[int]] | None:
