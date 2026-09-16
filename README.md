@@ -71,3 +71,6 @@ uv run python scripts/export_verified_trajectories.py
 Round 4 的换机安装、环境验收、真实评测与结果打包步骤见
 [docs/ROUND4_WINDOWS_HANDOFF_GUIDE.md](docs/ROUND4_WINDOWS_HANDOFF_GUIDE.md)，本轮证据边界和优化明细见
 [OPTIMIZATION_ROUND_4_REPORT.md](OPTIMIZATION_ROUND_4_REPORT.md)。
+
+下一位开发者继续 Round 5 时，请直接使用
+[ROUND5_CONTINUATION_PROMPT.md](ROUND5_CONTINUATION_PROMPT.md)，其中列出了相对上游的增量、当前未验证项和可复制的后续优化指令。
