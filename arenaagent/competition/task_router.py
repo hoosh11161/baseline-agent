@@ -4,6 +4,7 @@ from typing import Any
 
 from arenaagent.competition.runtime import CompetitionRuntime
 from arenaagent.competition.solvers.counting import CountingSolver
+from arenaagent.competition.solvers.jigsaw import JigsawSpatialSolver
 
 
 def _task_text(subject: Any) -> str:
@@ -17,12 +18,15 @@ class TaskStrategyRouter:
 
     def __init__(self, *, counting_scan_degrees: list[float] | None = None) -> None:
         self.counting = CountingSolver(counting_scan_degrees)
+        self.jigsaw = JigsawSpatialSolver()
 
-    def observe(self, runtime: CompetitionRuntime) -> None:
+    def observe(self, runtime: CompetitionRuntime, subject: Any = None) -> None:
         if runtime.metrics is None:
             return
         if runtime.task_type == "counting":
             self.counting.observe(runtime.metrics.episode_id)
+        elif runtime.task_type == "jigsaw" and isinstance(subject, dict):
+            runtime.set_strategy_context(self.jigsaw.infer(subject, runtime.objects).context())
 
     def propose_action(self, subject: Any, runtime: CompetitionRuntime) -> dict[str, Any] | None:
         if runtime.task_type != "counting" or runtime.metrics is None:

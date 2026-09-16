@@ -171,7 +171,7 @@ class VLMAgent(AgentBase):
         self._last_visible_objects_info = visible_objects_info or []
         image_data = self._to_data_url(b64_image)
         self._competition.observe(visible_objects_info, task_response)
-        self._task_router.observe(self._competition)
+        self._task_router.observe(self._competition, subject)
 
         logger.debug(
             "Perception acquired: image size={}, visible objects={}",
