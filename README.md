@@ -43,6 +43,10 @@
 - 官方判分轨迹的严格训练集导出（未验证回合不会混入）；
 - 模型超时、重试耗尽和感知异常的可恢复处理，不再伪造 `finish_task`；
 - Raven 本地模型直连，避免额外 VLM 决策；
+- Counting 有界扫描、episode 对象注册表和确定性计数；
+- Tidyroom 抓取/移动/放置验证状态机、NPC 结构化记忆、Jigsaw 公共坐标网格推断；
+- 一次有界动作修复、显式 RECOVERY 状态和任务级 FinishGuard；
+- 公开轨迹重放、官方回合限定的失败频率分析和模型矩阵脚本；
 - 安全的模型 JSON 解析以及可安装环境下的 protobuf 导入修复。
 
 Windows 上可以执行：
@@ -54,9 +58,12 @@ uv run python -m pytest -q
 uv run python scripts/preflight.py --release-dir "C:\path\to\official\release"
 .\scripts\run_preliminary.ps1 -Model VLMGPT5Config -RunTimes 5
 uv run python scripts/benchmark.py
+uv run python scripts/failure_analyzer.py
+uv run python scripts/replay_episode.py examples/public_trace_example.json
 uv run python scripts/export_verified_trajectories.py
 ```
 
 最后一条命令只接受由官方任务服务判分并标记为 verified 的回合，生成
 `training/verified_actions.jsonl` 和带来源 SHA-256 的 manifest。真实得分只会从官方任务服务返回的评测结果生成。
-完整边界、当前验证结果和后续 A/B 流程见 [COMPETITION_REPORT.md](COMPETITION_REPORT.md)。
+完整架构、57 项回归、真实环境边界和后续 A/B 流程见
+[COMPETITION_HIGH_SCORE_REPORT.md](COMPETITION_HIGH_SCORE_REPORT.md)。
