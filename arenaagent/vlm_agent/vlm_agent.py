@@ -192,6 +192,7 @@ class VLMAgent(AgentBase):
                 object_in_hand, _ = self.tongsim.has_object_in_hand(self.character_id)
             except Exception as exc:
                 logger.warning(f"获取手中物体失败: {exc}")
+        self._competition.update_hand_state(bool(object_in_hand))
 
         # 4: 生成大模型 prompt
         api_info = self._load_api_info()

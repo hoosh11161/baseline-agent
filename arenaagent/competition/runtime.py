@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from arenaagent.competition.solvers.tidyroom import TidyRoomTracker
+
 TASK_TYPES = {"tidyroom", "counting", "npc", "raven", "jigsaw", "unknown"}
 VECTOR_DIMENSIONS = 3
 EARLY_PHASE_RATIO = 0.65
@@ -272,6 +274,7 @@ class CompetitionRuntime:
         }
         self.run_metadata: dict[str, Any] = {}
         self.strategy_context: dict[str, Any] = {}
+        self.progress = TidyRoomTracker(retry_limit=self.repeated_action_limit)
         self._started_monotonic = 0.0
         self._last_subject_key = ""
 
@@ -312,6 +315,7 @@ class CompetitionRuntime:
         self.last_observation_diff = {"appeared": [], "disappeared": [], "changed": []}
         self.run_metadata = {}
         self.strategy_context = {}
+        self.progress.reset(subject_dict)
         self._started_monotonic = time.perf_counter()
         self._last_subject_key = subject_key
 
@@ -396,6 +400,21 @@ class CompetitionRuntime:
         ):
             self.metrics.stuck_count += 1
         self._capture_npc_facts(task_response)
+        self.progress.observe(self.objects, self._has_completion_evidence(task_response))
+
+    @staticmethod
+    def _has_completion_evidence(value: Any) -> bool:
+        if isinstance(value, dict):
+            for key in ("completed", "is_complete", "task_completed", "goal_completed"):
+                if value.get(key) is True:
+                    return True
+            return any(CompetitionRuntime._has_completion_evidence(child) for child in value.values())
+        if isinstance(value, list):
+            return any(CompetitionRuntime._has_completion_evidence(child) for child in value)
+        return False
+
+    def update_hand_state(self, has_object: bool) -> None:
+        self.progress.update_hand_state(bool(has_object))
 
     def _secondary_object_match(self, raw: dict[str, Any], tolerance: float = 5.0) -> str | None:
         """Match a remapped perception ID only with strong public-position evidence."""
@@ -597,6 +616,22 @@ class CompetitionRuntime:
             return self._invalid(
                 normalized, f"{self.task_type} requires an answer submission, not finish_task", "TERMINATION_ERROR"
             )
+        if name == "finish_task":
+            allowed, reason = self.progress.can_finish(self.task_type, object_in_hand)
+            if not allowed:
+                return self._invalid(normalized, f"finish blocked: {reason}", "PREMATURE_FINISH")
+
+        if name == "move_and_take_object":
+            object_id = next(
+                (str(params[key]) for key in ("object_id", "object") if params.get(key) not in (None, "")), ""
+            )
+            canonical_id = self.object_aliases.get(object_id, object_id)
+            if canonical_id in self.progress.completed_objects:
+                return self._invalid(
+                    normalized,
+                    f"object {object_id!r} is already verified complete",
+                    "PLANNING_ERROR",
+                )
 
         signature = self.action_signature(normalized)
         # solve_raven advances through a cached ranked candidate list internally,
@@ -651,6 +686,16 @@ class CompetitionRuntime:
                 self.metrics.retries += 1
                 self._capture_failure("ACTION_ERROR", str(result), action)
         name = str(action.get("action") or "").lower()
+        params = action.get("parameters") or {}
+        raw_object_id = next(
+            (
+                str(params[key])
+                for key in ("object_id", "object", "faucet_object_id", "dirt_id")
+                if params.get(key) not in (None, "")
+            ),
+            "",
+        )
+        self.progress.record_action(action, result, self.object_aliases.get(raw_object_id, raw_object_id))
         if name == "speak_to_npc" and not failed:
             params = action.get("parameters") or {}
             target = str(next((params[key] for key in ("npc_name", "npc", "target", "name") if params.get(key)), ""))
@@ -716,7 +761,37 @@ class CompetitionRuntime:
                 ),
             },
             "strategy": self.strategy_context,
+            "task_progress": self.progress.context(),
+            "placement_candidates": self._placement_candidates(),
         }
+
+    def _placement_candidates(self) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        for canonical_id in sorted(self.visible_canonical_ids):
+            item = self.objects.get(canonical_id, {})
+            current_id = str(item.get("current_object_id") or canonical_id)
+            place_location = item.get("place_location")
+            if _is_location(place_location):
+                candidates.append({"object_id": current_id, "source": "place_location", "location": place_location})
+                continue
+            bounds = item.get("world_aabb")
+            if isinstance(bounds, dict) and isinstance(bounds.get("min"), dict) and isinstance(bounds.get("max"), dict):
+                lower = bounds["min"]
+                upper = bounds["max"]
+                values = []
+                for axis in ("X", "Y"):
+                    low = _as_number(lower.get(axis, lower.get(axis.lower())))
+                    high = _as_number(upper.get(axis, upper.get(axis.lower())))
+                    if low is None or high is None:
+                        values = []
+                        break
+                    values.append(round((low + high) / 2.0, 3))
+                top = _as_number(upper.get("Z", upper.get("z")))
+                if len(values) == 2 and top is not None:
+                    candidates.append(
+                        {"object_id": current_id, "source": "world_aabb_top", "location": [*values, top]}
+                    )
+        return candidates
 
     def _count_summary(self) -> dict[str, dict[str, int]]:
         summary: dict[str, dict[str, int]] = {}
@@ -752,6 +827,7 @@ class CompetitionRuntime:
             "known_objects": len(self.objects),
             "npc_facts": self.npc_facts,
             "recent_actions": self.action_records,
+            "task_progress": self.progress.context(),
         }
         self._write_artifacts(payload)
         self.metrics = None
