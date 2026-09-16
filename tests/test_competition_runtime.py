@@ -156,6 +156,27 @@ class CompetitionRuntimeTests(unittest.TestCase):
             self.assertFalse(decision.valid, action)
             self.assertEqual(decision.failure_class, "ACTION_ERROR")
 
+    def test_two_argument_object_actions_require_object_and_location(self) -> None:
+        runtime = self.make_runtime()
+        runtime.ensure_episode({"task_type": "tidyroom", "subject": "整理"})
+        runtime.observe([{"object_id": "7", "name": "cup"}])
+        invalid_actions = [
+            {"action": "pour_water", "parameters": {"object_id": "7"}},
+            {"action": "pour_water", "parameters": {"location": [1, 2, 3]}},
+            {"action": "slice_food", "parameters": {"object_id": "7"}},
+            {"action": "slice_food", "parameters": {"target_location": [1, 2, 3]}},
+        ]
+        for action in invalid_actions:
+            decision = runtime.validate_action(action)
+            self.assertFalse(decision.valid, action)
+            self.assertEqual(decision.failure_class, "ACTION_ERROR")
+
+        for action_name in ("pour_water", "slice_food"):
+            decision = runtime.validate_action(
+                {"action": action_name, "parameters": {"object_id": "7", "location": [1, 2, 3]}}
+            )
+            self.assertTrue(decision.valid, action_name)
+
     def test_model_failure_activates_recovery_context_without_losing_state(self) -> None:
         runtime = self.make_runtime()
         runtime.ensure_episode({"task_type": "tidyroom", "subject": "整理"})

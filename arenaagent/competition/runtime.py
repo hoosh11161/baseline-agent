@@ -628,6 +628,14 @@ class CompetitionRuntime:
         if aliases and not any(params.get(key) not in (None, "") for key in aliases):
             return self._invalid(normalized, f"missing required parameter: {' or '.join(aliases)}", "ACTION_ERROR")
 
+        if name in {"pour_water", "slice_food"}:
+            if not any(params.get(key) not in (None, "") for key in ("object_id", "object")):
+                return self._invalid(normalized, "missing required parameter: object_id or object", "ACTION_ERROR")
+            if not any(params.get(key) is not None for key in ("location", "target_location")):
+                return self._invalid(
+                    normalized, "missing required parameter: location or target_location", "ACTION_ERROR"
+                )
+
         if name == "move_and_put_down":
             if not any(params.get(key) is not None for key in ("move_target_location", "move_location")):
                 return self._invalid(normalized, "missing move_target_location", "ACTION_ERROR")

@@ -9,6 +9,27 @@ def _normalize(value: Any) -> str:
     return re.sub(r"[\s，。！？,.!?;；:：]+", "", str(value or "")).lower()
 
 
+def _normalize_question(value: Any) -> str:
+    """Normalize harmless conversational wrappers without merging distinct questions."""
+    text = _normalize(value)
+    prefixes = ("麻烦请问", "麻烦告诉我", "请告诉我", "你知道", "请问", "please")
+    suffixes = ("可以吗", "好吗", "吗", "呢")
+    changed = True
+    while changed and text:
+        changed = False
+        for prefix in prefixes:
+            if text.startswith(prefix):
+                text = text[len(prefix) :]
+                changed = True
+                break
+        for suffix in suffixes:
+            if text.endswith(suffix):
+                text = text[: -len(suffix)]
+                changed = True
+                break
+    return text
+
+
 @dataclass(slots=True)
 class NPCMemory:
     allowed_people: set[str] = field(default_factory=set)
@@ -35,11 +56,11 @@ class NPCMemory:
         return not self.allowed_people or str(name) in self.allowed_people
 
     def was_asked(self, name: str, question: str) -> bool:
-        return (str(name), _normalize(question)) in self.asked_questions
+        return (str(name), _normalize_question(question)) in self.asked_questions
 
     def record_exchange(self, name: str, question: str, reply: Any, hints: Any = None) -> None:
         target = str(name)
-        normalized_question = _normalize(question)
+        normalized_question = _normalize_question(question)
         self.asked_questions.add((target, normalized_question))
         answer = str(reply or "").strip()
         self.last_answer = answer
@@ -56,7 +77,7 @@ class NPCMemory:
         self.unresolved_questions = [
             item
             for item in self.unresolved_questions
-            if not (item["npc"] == target and _normalize(item["question"]) == normalized_question)
+            if not (item["npc"] == target and _normalize_question(item["question"]) == normalized_question)
         ]
 
     def ingest_fact(self, value: Any) -> None:

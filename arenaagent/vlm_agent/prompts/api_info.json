@@ -1,4 +1,20 @@
 {
+    "finish_task": {
+        "sig": "(output:any)",
+        "docs": "完成无需提交答案的操作类任务。仅在环境观察已经验证全部目标完成且双手为空时调用。\n\n:param output: 简短的完成说明"
+    },
+    "look_at_location": {
+        "sig": "(target_location:Vector3, is_cancel:bool=False, execute_immediately:bool=False)",
+        "docs": "看向指定的三维坐标。\n\n:param target_location: 要观察的位置\n:param is_cancel: 是否取消当前观察动作\n:param execute_immediately: 是否立即执行"
+    },
+    "look_at_object": {
+        "sig": "(object_id:str, is_cancel:bool=False)",
+        "docs": "看向当前视觉中可见的物体。\n\n:param object_id: 当前可见物体列表中的映射 ID\n:param is_cancel: 是否取消当前观察动作"
+    },
+    "point_at_object": {
+        "sig": "(object_id:str, is_cancel:bool=False, which_hand:int=0)",
+        "docs": "指向当前视觉中可见的物体。\n\n:param object_id: 当前可见物体列表中的映射 ID\n:param is_cancel: 是否取消指向动作\n:param which_hand: 使用的手"
+    },
     "move_and_take_object": {
         "sig": "(object_id: str, which_hand=0)", 
         "docs": "移动到对象的位置并抓取对象。\n\n:param object_id: 当前第一视觉感知图片中可见物体列表中的映射 ID 值\n:param which_hand: 使用的手 (int)"
@@ -34,6 +50,34 @@
     "move_to_location": {
         "sig": "(target_location:Vector3, stop_distance:float=0.5)", 
         "docs": "移动到指定位置。\n\n:param target_location: 目标位置\n:param stop_distance: 停止距离，默认0.5米"
+    },
+    "pour_water": {
+        "sig": "(object_id:str, location:Vector3, which_hand:int=0)",
+        "docs": "使用指定物体向目标位置倒水。object_id 和 location 都是必填参数。\n\n:param object_id: 当前可见物体列表中的映射 ID\n:param location: 倒水目标的三维坐标\n:param which_hand: 使用的手"
+    },
+    "sit_down_to_object": {
+        "sig": "(object_id:str)",
+        "docs": "移动并坐到指定可见物体上。\n\n:param object_id: 当前可见物体列表中的映射 ID"
+    },
+    "slice_food": {
+        "sig": "(object_id:str, location:Vector3)",
+        "docs": "切割指定食物。object_id 和 location 都是必填参数。\n\n:param object_id: 当前可见食物的映射 ID\n:param location: 切割位置的三维坐标"
+    },
+    "wash_hands": {
+        "sig": "(faucet_object_id:str)",
+        "docs": "在指定水龙头洗手。\n\n:param faucet_object_id: 当前可见水龙头的映射 ID"
+    },
+    "wash_object_in_hand": {
+        "sig": "(faucet_object_id:str)",
+        "docs": "在指定水龙头清洗手中物体。\n\n:param faucet_object_id: 当前可见水龙头的映射 ID"
+    },
+    "mop_floor": {
+        "sig": "(dirt_id:str)",
+        "docs": "清理指定的地面污渍。\n\n:param dirt_id: 当前可见污渍的映射 ID"
+    },
+    "rest": {
+        "sig": "()",
+        "docs": "让角色原地休息。"
     },
     "speak_to_npc": {
         "sig": "(npc_name:str, message:str)",

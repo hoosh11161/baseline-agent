@@ -125,6 +125,24 @@ class AgentIntegrationTests(unittest.TestCase):
         self.assertIn("unique_objects_seen", user_text)
         self.assertNotIn("{self.competition_state}", user_text)
 
+    def test_api_schema_exposes_all_primary_runtime_actions(self) -> None:
+        agent, _, _ = self.make_agent("not used")
+        api_info = agent._load_api_info()
+        primary_actions = {
+            "finish_task",
+            "look_at_location",
+            "look_at_object",
+            "point_at_object",
+            "pour_water",
+            "sit_down_to_object",
+            "slice_food",
+            "wash_hands",
+            "wash_object_in_hand",
+            "mop_floor",
+            "rest",
+        }
+        self.assertEqual(primary_actions - set(api_info), set())
+
     def test_history_drops_stale_base64_images_but_keeps_text(self) -> None:
         agent, _, _ = self.make_agent("not used")
         agent._append_history_messages(

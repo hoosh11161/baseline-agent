@@ -21,6 +21,12 @@ class NPCMemoryTests(unittest.TestCase):
         memory.record_exchange("赵爷爷", "钥匙 在 哪里？", "钥匙在桌上")
         self.assertTrue(memory.was_asked("赵爷爷", "钥匙在哪里"))
 
+    def test_duplicate_question_ignores_polite_wrappers(self) -> None:
+        memory = NPCMemory()
+        memory.reset({"npc_asset_name": {"赵爷爷": "npc_zhao"}})
+        memory.record_exchange("赵爷爷", "请问钥匙在哪里？", "钥匙在桌上")
+        self.assertTrue(memory.was_asked("赵爷爷", "你知道钥匙在哪里吗？"))
+
     def test_action_guard_rejects_unknown_npc(self) -> None:
         runtime = CompetitionRuntime()
         runtime.ensure_episode(
@@ -57,6 +63,18 @@ class NPCMemoryTests(unittest.TestCase):
             {
                 "action": "speak_to_npc",
                 "parameters": {"npc_name": "zhaoyeye", "message": "钥匙在哪里？"},
+                "output": 0,
+            }
+        )
+        self.assertEqual(action["parameters"]["npc_name"], "赵爷爷")
+
+    def test_agent_normalizes_official_asset_id_before_guard(self) -> None:
+        agent = PreliminaryBaselineAgent(stub=None, channel=None)
+        agent._npc_name_to_asset_name = {"赵爷爷": "npc_zhao"}
+        action = agent._normalize_action_parameters(
+            {
+                "action": "move_to_npc",
+                "parameters": {"npc_name": "npc_zhao"},
                 "output": 0,
             }
         )

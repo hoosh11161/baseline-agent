@@ -1205,6 +1205,13 @@ class VLMAgent(AgentBase):
             for name in self._npc_name_to_asset_name
             if str(name).strip()
         }
+        # The official task payload exposes both the display name and asset ID.
+        # Accept either representation, but normalize back to the display name
+        # before the runtime allow-list check and API dispatch.
+        for canonical_name, asset_name in self._npc_name_to_asset_name.items():
+            asset_key = self._normalize_npc_lookup_key(asset_name)
+            if asset_key:
+                alias_map.setdefault(asset_key, str(canonical_name))
         for alias_key, canonical_name in self._NPC_PINYIN_ALIASES.items():
             if canonical_name in self._npc_name_to_asset_name:
                 alias_map.setdefault(alias_key, canonical_name)
