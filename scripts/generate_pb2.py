@@ -73,6 +73,28 @@ def ensure_init_packages(relevant_path: str):
         pkg_dir = parent
 
 
+def rewrite_generated_imports(path: str) -> None:
+    """Make generated modules importable from the installed arenaagent package.
+
+    protoc preserves proto import names such as ``arena.message``.  Those
+    top-level compatibility packages are not reliably available to editable or
+    packaged installs, while all generated modules live below
+    ``arenaagent.generated``.  Rewrite only generated import statements.
+    """
+    if not path.endswith((".py", ".pyi")) or not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as handle:
+        content = handle.read()
+    rewritten = re.sub(
+        r"(?m)^from (arena|tongsim|launcher)(\.[\w.]+ import )",
+        rf"from {GENERATED_IMPORT_PREFIX}.\1\2",
+        content,
+    )
+    if rewritten != content:
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(rewritten)
+
+
 def _is_generated_compat_file(path: str) -> bool:
     if not os.path.exists(path):
         return True
@@ -186,6 +208,8 @@ def generate_pb(proto_file: str):
     base = os.path.splitext(os.path.relpath(proto_file, proto_root))[0]
     relevant_path = os.path.join(OUTPUT_DIR, base)
     ensure_init_packages(relevant_path)
+    for suffix in ("_pb2.py", "_pb2.pyi", "_pb2_grpc.py"):
+        rewrite_generated_imports(relevant_path + suffix)
 
 def main():
     if not os.path.exists(PROTO_DIR):

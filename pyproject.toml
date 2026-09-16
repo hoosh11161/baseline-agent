@@ -42,7 +42,7 @@ dependencies = [
 arenaagent = "arenaagent.builder:main"
 
 [project.optional-dependencies]
-dev = ["ruff", "flake8", "pylint", "Flake8-pyproject", "pre-commit", "black"]
+dev = ["pytest", "ruff", "flake8", "pylint", "Flake8-pyproject", "pre-commit", "black"]
 
 [[tool.uv.index]]
 name = "tuna"
@@ -59,11 +59,13 @@ include = [".", "arenaagent*", "arena*", "launcher*"]
 
 [tool.ruff]
 extend-exclude = ["*_pb2.py", "*_grpc.py"]
-ignore = ["PLR0913"]
 line-length = 120
+
+[tool.ruff.lint]
+ignore = ["PLR0913"]
 select = ["E", "F", "PL", "B", "N", "I"]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "arena/tasks/cognition/utils/*.py" = [
   "N802",

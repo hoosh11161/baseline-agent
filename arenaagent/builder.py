@@ -181,7 +181,7 @@ def _create_channel(target: str) -> grpc.Channel:
 
 def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a registered agent by name.")
-    parser.add_argument("--agent_name", required=True, help="Registered agent name")
+    parser.add_argument("--agent_name", help="Registered agent name")
     parser.add_argument("--config", default="config.toml", help="Path to agent config directory")
     parser.add_argument("--vlm_model", default="VLMGPT5Config", help="Model name used by vlm_agent (must be in vlm_config.__ALL__).")
     parser.add_argument("--get_vlm_model", action="store_true", help="List all available VLM models and exit.")
@@ -200,6 +200,9 @@ def main() -> None:
         except Exception as exc:  # pragma: no cover - 仅用于命令行工具
             logger.error("Failed to load VLM models: {}", exc)
         return
+
+    if not args.agent_name:
+        raise SystemExit("--agent_name is required unless --get_vlm_model is used")
 
     config = load_config(config_path=args.config)
     log_dir = config.get("log_dir", "logs") if isinstance(config, dict) else "logs"

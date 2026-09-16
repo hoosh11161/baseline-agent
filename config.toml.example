@@ -3,6 +3,10 @@ name = "preliminary_baseline_agent"
 sleep_between_steps = 2.0
 log_dir = "logs"
 tongsim_server_endpoint = "127.0.0.1:50060"
+max_history_messages = 8
+default_max_steps = 60
+repeated_action_limit = 2
+stagnant_observation_limit = 5
 
 [final_baseline_agent]
 name = "final_baseline_agent"

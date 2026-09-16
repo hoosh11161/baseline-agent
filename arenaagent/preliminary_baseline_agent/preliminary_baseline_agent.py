@@ -84,7 +84,7 @@ class PreliminaryBaselineAgent(VLMAgent):
         return {
             "api_info": api_info,
             "example_objects_info": visible_objects_info[0] if len(visible_objects_info) > 0 else {},
-            "task_text": subject["subject"],
+            "task_text": subject.get("subject") or subject.get("goal") or subject.get("task_prompt") or "",
             "task_prompt": task_prompt,
             "visiable_objects_info": visible_objects_info,
             "object_in_hand": object_in_hand,
@@ -94,5 +94,6 @@ class PreliminaryBaselineAgent(VLMAgent):
             "action_res": self._serialize_prompt_status(self._last_action_res),
             "apply_resp": self._serialize_prompt_status(self._last_apply_resp),
             "action_histories": self._action_histories,
+            "competition_state": self._competition.prompt_context(),
         }
 

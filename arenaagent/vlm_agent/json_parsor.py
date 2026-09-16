@@ -38,9 +38,8 @@ def extract_json_with_eval(text):
         # 获取最后一个匹配
         json_str = matches[-1]
 
-        # 使用eval()直接将Python格式的字符串转换为Python对象
-        # 注意：仅在数据来源可信的情况下使用eval()
-        python_obj = eval(json_str)
+        # 模型输出是不可信输入，只允许 Python 字面量，禁止执行代码。
+        python_obj = ast.literal_eval(json_str)
 
         # 如果需要标准JSON输出，可以再次转换
         return python_obj
@@ -70,50 +69,95 @@ def fix_structural_dicts_only(text):
     return fixed
 
 
+def _balanced_json_candidates(text):
+    """Yield balanced array/object substrings while respecting quoted strings."""
+    candidates = []
+    stack = []
+    start = None
+    quote = None
+    escaped = False
+    pairs = {"]": "[", "}": "{"}
+    for index, char in enumerate(text):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in ('"', "'") and stack:
+            quote = char
+            continue
+        if char in "[{":
+            if not stack:
+                start = index
+            stack.append(char)
+            continue
+        if char in "]}":
+            if not stack or stack[-1] != pairs[char]:
+                stack = []
+                start = None
+                continue
+            stack.pop()
+            if not stack and start is not None:
+                candidates.append(text[start : index + 1])
+                start = None
+    return candidates
+
+
+def _parse_json_candidate(candidate):
+    try:
+        return json.loads(candidate)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    normalized = (
+        candidate.replace("，", ",")
+        .replace("：", ":")
+        .replace("“", '"')
+        .replace("”", '"')
+        .replace("‘", "'")
+        .replace("’", "'")
+    )
+    try:
+        return json.loads(fix_structural_dicts_only(normalized))
+    except (json.JSONDecodeError, TypeError):
+        pass
+    try:
+        return ast.literal_eval(normalized)
+    except (ValueError, SyntaxError):
+        return None
+
+
 def extract_last_json_from_text(text):
     """
     提取最后一个 JSON 片段（数组或对象）。
     - 若整体就是合法 JSON，直接解析。
     - 否则，用正则抓取最后一个 [ {...} ] 片段并解析。
     """
-    stripped = (text or "").strip()
-    if stripped.startswith(("[", "{")):
-        try:
-            return json.loads(stripped)
-        except Exception:
-            pass
+    raw = str(text or "").strip()
+    if not raw:
+        return "未找到符合条件的JSON数据"
 
-    json_pattern = r"\[\s*{.*?}\s*\]"
-    try:
-        text = text.replace("True", "true").replace("False", "false").replace("None", "null")
-        # 处理常见中文符号
-        text = (
-            text.replace("，", ",")
-            .replace("：", ":")
-            .replace("“", '"')
-            .replace("”", '"')
-            .replace("‘", "'")
-            .replace("’", "'")
-            .replace("；", ";")
-            .replace("【", "[")
-            .replace("】", "]")
-            .replace("（", "(")
-            .replace("）", ")")
-            .replace("。", ".")
-            .replace("？", "?")
-            .replace("！", "!")
-        )
+    if raw.startswith("```"):
+        lines = raw.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        raw = "\n".join(lines).strip()
 
-        matches = re.findall(json_pattern, text, re.DOTALL)
-        if not matches:
-            print("未找到符合条件的JSON数据")
-            return "未找到符合条件的JSON数据"
+    direct = _parse_json_candidate(raw)
+    if isinstance(direct, (list, dict)):
+        return direct
 
-        json_str = fix_structural_dicts_only(matches[-1])
-        return json.loads(json_str)
-    except json.JSONDecodeError as e:
-        print(f"JSON解析错误: {e}")
-        return f"JSON解析错误: {e}"
+    for candidate in reversed(_balanced_json_candidates(raw)):
+        parsed = _parse_json_candidate(candidate)
+        if isinstance(parsed, (list, dict)):
+            return parsed
+
+    return "未找到符合条件的JSON数据"
 
 
 if __name__ == "__main__":
@@ -122,7 +166,7 @@ if __name__ == "__main__":
     这是一些其他的文本，不包含JSON数据。
 [
   {
-    "think": "我拿到了黑色杯子，我将它放到餐桌上。餐桌位置在{'X': -348.715576171875, 'Y': 97.6534194946289, 'Z': 3.751265048980713}",
+    "think": "我拿到了黑色杯子，我将它放到餐桌上。",
     "action": "put_down_sth",
     "parameters": {
       "target_location": {'X': -348.715576171875, 'Y': 97.6534194946289, 'Z': 63.751265048980713}

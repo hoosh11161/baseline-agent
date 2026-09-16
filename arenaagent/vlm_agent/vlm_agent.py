@@ -6,6 +6,7 @@ import json
 import os
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from google.protobuf import struct_pb2
@@ -13,6 +14,7 @@ from loguru import logger
 
 from arenaagent.agent_base import AgentBase, AgentCfg, parse_struct_to_data
 from arenaagent.builder import Register
+from arenaagent.competition.runtime import ActionValidation, CompetitionRuntime
 from arenaagent.tongsim_grpc_client import TongSimGrpcClient
 from arenaagent.tongsim_interface import Rotation, TongSimInterface
 from arenaagent.utils.configclass import configclass
@@ -33,6 +35,9 @@ class VLMAgentCfg(AgentCfg):
     vlm_config: VLMConfig = VLMConfig()
     tongsim_server_endpoint: str = "127.0.0.1:50060"
     max_history_messages: int = 15
+    default_max_steps: int = 60
+    repeated_action_limit: int = 2
+    stagnant_observation_limit: int = 5
 
 
 @Register("vlm_agent")
@@ -81,6 +86,12 @@ class VLMAgent(AgentBase):
         self._raven_candidates_cache: dict[str, list[list[int]]] = {}
         self._raven_next_index: dict[str, int] = {}
         self._raven_image_temp_path: str = ""
+        self._competition = CompetitionRuntime(
+            log_dir=str(getattr(self.cfg, "log_dir", "logs") or "logs"),
+            repeated_action_limit=int(getattr(self.cfg, "repeated_action_limit", 2) or 2),
+            stagnant_observation_limit=int(getattr(self.cfg, "stagnant_observation_limit", 5) or 5),
+            default_max_steps=int(getattr(self.cfg, "default_max_steps", 60) or 60),
+        )
 
     def init(self, opt: dict[str, Any]) -> None:
         if self._initialized:
@@ -106,6 +117,8 @@ class VLMAgent(AgentBase):
 
     def deinit(self):
         self._cleanup_raven_temp_images()
+        if self._competition.metrics is not None:
+            self._competition.finish(termination_reason="agent_deinitialized_before_evaluation")
         if not self._initialized:
             return
         if self.tongsim:
@@ -130,6 +143,10 @@ class VLMAgent(AgentBase):
         if not self._initialized:
             self.init()
 
+        # Honour a log_dir loaded after the agent object was constructed.
+        self._competition.log_dir = Path(os.path.abspath(getattr(self.cfg, "log_dir", "logs") or "logs"))
+        self._competition.ensure_episode(subject)
+
         # 1/2/3: 获取感知（第一视角 + 可见物体映射）
         perception = (
             self.tongsim.acquire_first_person_perception(self.character_id, width=1280, height=720)
@@ -141,6 +158,8 @@ class VLMAgent(AgentBase):
         visible_objects_info = perception.get("objects", [])
         self._last_visible_objects_info = visible_objects_info or []
         image_data = self._to_data_url(b64_image)
+        self._competition.record_vision_call()
+        self._competition.observe(visible_objects_info, task_response)
 
         logger.debug("Perception acquired: image size={}, visible objects={}", len(b64_image) if b64_image else 0, visible_objects_info)
 
@@ -167,7 +186,22 @@ class VLMAgent(AgentBase):
 
         self._before_prompt_hook(subject)
 
-        logger.info("current subject {}", subject["subject"])
+        # Raven already has an official local model path.  Route it directly so
+        # the VLM cannot forget to call the deterministic solver or invent an
+        # answer. Ranked candidates are retried by raven_skill if needed.
+        if self._competition.task_type == "raven":
+            raven_action = {"action": "solve_raven", "parameters": {}, "output": 0, "think": "local raven solver"}
+            validation = self._competition.validate_action(raven_action, object_in_hand=bool(object_in_hand))
+            action_res = self._execute_validated_action(validation)
+            self._record_competition_action(raven_action, action_res, validation)
+            return action_res if isinstance(action_res, dict) else {}
+
+        subject_text = (
+            subject.get("subject") or subject.get("goal") or subject.get("task_prompt") or ""
+            if isinstance(subject, dict)
+            else str(subject)
+        )
+        logger.info("current subject {}", subject_text)
         logger.info("current task response {}", task_response)
         prompt_variables = self._build_prompt_variables(
             subject=subject,
@@ -201,34 +235,28 @@ class VLMAgent(AgentBase):
         json_parsed_message = extract_last_json_from_text(response_text)
         self.last_json_parse_message = json_parsed_message
 
-        if response.token_usage:
+        token_usage = getattr(response, "token_usage", None)
+        self._competition.record_llm_call(token_usage)
+        if token_usage:
             logger.info("Token Usage: \n")
             logger.info(
                 "Prompt tokens: {}, Completion tokens: {}, Total tokens: {}",
-                response.token_usage["prompt_tokens"],
-                response.token_usage["completion_tokens"],
-                response.token_usage["total_tokens"],
+                token_usage["prompt_tokens"],
+                token_usage["completion_tokens"],
+                token_usage["total_tokens"],
             )
 
-        logger.info("vlm client response {} and parsed json message {}", str(response.text), str(json_parsed_message))
+        logger.info("vlm client response {} and parsed json message {}", response_text, str(json_parsed_message))
         # 6: 解析回复
         parsed_action = self._parse_action_from_response(json_parsed_message)
 
         # 7: 执行动作
-        action_res = self._do_action(parsed_action)
+        validation = self._competition.validate_action(parsed_action, object_in_hand=bool(object_in_hand))
+        action_res = self._execute_validated_action(validation)
         self._last_action_res = action_res if action_res is not None else {}
+        self._record_competition_action(parsed_action, action_res, validation)
 
-        # 8: 记录动作历史
-        if parsed_action:
-            self._action_histories.append(
-                {
-                    "action": parsed_action,
-                    "result": self._last_action_res,
-                }
-            )
-            self._trim_action_histories()
-
-        # 9: 存入历史
+        # 8: 存入历史
         if messages:
             self._append_history_messages(
                 [
@@ -238,6 +266,27 @@ class VLMAgent(AgentBase):
             )
 
         return action_res if isinstance(action_res, dict) else {}
+
+    def _execute_validated_action(self, validation: ActionValidation) -> Any:
+        if not validation.valid:
+            logger.warning("Blocked invalid action before TongSim call: {}", validation.error)
+            return self._fail_result(error=validation.error, failure_class=validation.failure_class, locally_blocked=True)
+        return self._do_action(validation.action)
+
+    def _record_competition_action(
+        self,
+        action: dict[str, Any],
+        result: Any,
+        validation: ActionValidation,
+    ) -> None:
+        recorded_action = validation.action if validation.action else action
+        self._competition.record_action(recorded_action, result, validation=validation)
+        if recorded_action:
+            self._action_histories.append({"action": recorded_action, "result": result})
+            self._trim_action_histories()
+
+    def _on_subject_evaluated(self, evaluation: dict[str, Any]) -> None:
+        self._competition.finish(evaluation, termination_reason="evaluated_by_official_task_service")
 
     def _append_history_messages(self, messages: list[dict[str, Any]]) -> None:
         if not messages:
@@ -327,6 +376,7 @@ class VLMAgent(AgentBase):
             "action_res": self._serialize_prompt_status(self._last_action_res),
             "apply_resp": self._serialize_prompt_status(self._last_apply_resp),
             "action_histories": self._trim_action_histories(),
+            "competition_state": self._competition.prompt_context(),
         }
 
     def _save_prompt_messages(self, messages: list[dict[str, Any]]) -> None:
@@ -947,6 +997,7 @@ class VLMAgent(AgentBase):
         self._last_npc_reply = str(reply)
         hints = data.get("hints")
         logger.debug("speak_to_npc got reply {} with hints {}", self._last_npc_reply, hints)
+        self._competition.record_npc_exchange(str(target), submitted_message, self._last_npc_reply, hints)
         if isinstance(hints, dict):
             self._last_npc_subject = hints
         elif hints:

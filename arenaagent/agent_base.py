@@ -121,7 +121,11 @@ class AgentBase(ABC):
             if self.sleep_between_steps > 0:
                 time.sleep(self.sleep_between_steps)
 
-        self._evaluate_subject()
+        evaluation = self._evaluate_subject()
+        self._on_subject_evaluated(evaluation)
+
+    def _on_subject_evaluated(self, evaluation: dict[str, Any]) -> None:
+        """Optional lifecycle hook for metrics/reporting implementations."""
 
     def _handle_finish(self, params: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
         self.subject_finished = True
