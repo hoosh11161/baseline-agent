@@ -1,0 +1,61 @@
+{
+  "status": "BLOCKED",
+  "ready_for_official_benchmark": false,
+  "checks": [
+    {
+      "name": "python",
+      "status": "PASS",
+      "detail": "3.12.14"
+    },
+    {
+      "name": "import:arenaagent.builder",
+      "status": "PASS",
+      "detail": "importable"
+    },
+    {
+      "name": "import:arenaagent.generated.arena.agent.arena_agent_service_pb2_grpc",
+      "status": "PASS",
+      "detail": "importable"
+    },
+    {
+      "name": "import:arenaagent.generated.tongsim.tongsim_service_pb2_grpc",
+      "status": "PASS",
+      "detail": "importable"
+    },
+    {
+      "name": "asset:arenaagent/vlm_agent/skills/Resnet18_MLP_epoch_199.pth",
+      "status": "PASS",
+      "detail": "bytes=53106599, sha256_prefix=769594c993891000"
+    },
+    {
+      "name": "asset:arenaagent/vlm_agent/skills/embedding.npy",
+      "status": "PASS",
+      "detail": "bytes=54093, sha256_prefix=49d75c4fbcae76ae"
+    },
+    {
+      "name": "asset:arenaagent/vlm_agent/skills/group_coords.json",
+      "status": "PASS",
+      "detail": "bytes=8226, sha256_prefix=e4db586589f25642"
+    },
+    {
+      "name": "model_credentials",
+      "status": "BLOCKED",
+      "detail": "no supported API-key environment variable is set"
+    },
+    {
+      "name": "service:task_service",
+      "status": "BLOCKED",
+      "detail": "not reachable at 127.0.0.1:50051: timed out"
+    },
+    {
+      "name": "service:tongsim_proxy",
+      "status": "BLOCKED",
+      "detail": "not reachable at 127.0.0.1:50060: timed out"
+    },
+    {
+      "name": "official_release",
+      "status": "BLOCKED",
+      "detail": "no --release-dir supplied"
+    }
+  ]
+}

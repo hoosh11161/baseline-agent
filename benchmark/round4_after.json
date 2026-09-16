@@ -1,0 +1,52 @@
+{
+  "snapshot": "round4-optimized-implementation",
+  "implementation_commit": "9c90974fbcc0cac37d93450a588fcf18ea621aad",
+  "python": "3.12.14",
+  "unit_tests": {
+    "status": "PASS",
+    "passed": 109,
+    "failed": 0,
+    "baseline_passed": 76,
+    "added_regressions": 33
+  },
+  "compileall": "PASS",
+  "offline_replay": {
+    "status": "PASS",
+    "verification_scope": "OFFLINE_PUBLIC_TRACE_GUARD_REPLAY",
+    "official_score_verified": false,
+    "mismatches": 0,
+    "postcondition_unknowns": 1
+  },
+  "lint": {
+    "round4_targeted_checks": "PASS",
+    "project_wide_status": "FAIL",
+    "project_wide_findings": 145,
+    "note": "Project-wide Ruff findings are in legacy compatibility/model code; the upstream Raven adapter has the same 9 findings before and after this round. No claim of a clean project-wide lint run is made."
+  },
+  "environment": {
+    "status": "REAL_TONGSIM_NOT_AVAILABLE",
+    "task_service_50051": "BLOCKED",
+    "tongsim_proxy_50060": "BLOCKED",
+    "model_credentials": "BLOCKED",
+    "official_release": "NOT_SUPPLIED"
+  },
+  "real_benchmark": {
+    "status": "NOT_VERIFIED",
+    "episodes": 0,
+    "before_score": null,
+    "after_score": null,
+    "success_rate_delta": null,
+    "reason": "No official task-service episode metrics were available. No score, success-rate, or leaderboard-improvement claim is made."
+  },
+  "model_benchmark": {
+    "status": "NOT_VERIFIED",
+    "models_tested": 0,
+    "reason": "No model credentials or official episodes were available."
+  },
+  "first_failure_frequency": {
+    "status": "NOT_VERIFIED",
+    "official_verified_episodes": 0,
+    "official_failures": 0,
+    "ranked_failures": []
+  }
+}

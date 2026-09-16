@@ -67,3 +67,7 @@ uv run python scripts/export_verified_trajectories.py
 `training/verified_actions.jsonl` 和带来源 SHA-256 的 manifest。真实得分只会从官方任务服务返回的评测结果生成。
 完整架构、57 项回归、真实环境边界和后续 A/B 流程见
 [COMPETITION_HIGH_SCORE_REPORT.md](COMPETITION_HIGH_SCORE_REPORT.md)。
+
+Round 4 的换机安装、环境验收、真实评测与结果打包步骤见
+[docs/ROUND4_WINDOWS_HANDOFF_GUIDE.md](docs/ROUND4_WINDOWS_HANDOFF_GUIDE.md)，本轮证据边界和优化明细见
+[OPTIMIZATION_ROUND_4_REPORT.md](OPTIMIZATION_ROUND_4_REPORT.md)。

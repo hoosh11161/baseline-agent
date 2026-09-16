@@ -1,0 +1,52 @@
+{
+  "status": "PASS",
+  "verification_scope": "OFFLINE_PUBLIC_TRACE_GUARD_REPLAY",
+  "official_score_verified": false,
+  "task_type": "tidyroom",
+  "steps": [
+    {
+      "step": 1,
+      "valid": true,
+      "expected_valid": true,
+      "matched_expectation": true,
+      "failure_class": "",
+      "error": ""
+    },
+    {
+      "step": 2,
+      "valid": false,
+      "expected_valid": false,
+      "matched_expectation": true,
+      "failure_class": "PERCEPTION_ERROR",
+      "error": "object_id '999' is not in the current visible-object mapping"
+    }
+  ],
+  "mismatches": [],
+  "metrics": {
+    "episode_id": "offline-replay-example",
+    "task_type": "tidyroom",
+    "task_text": "整理房间",
+    "success": null,
+    "score": null,
+    "steps": 2,
+    "invalid_actions": 1,
+    "replans": 1,
+    "retries": 0,
+    "llm_calls": 0,
+    "vision_calls": 0,
+    "tokens": 0,
+    "stuck_count": 0,
+    "model_errors": 0,
+    "model_failure_count": 0,
+    "perception_errors": 0,
+    "repeated_actions": 0,
+    "finish_guard_blocks": 0,
+    "postcondition_successes": 0,
+    "postcondition_failures": 0,
+    "postcondition_unknowns": 1,
+    "prompt_chars": 0,
+    "max_prompt_chars": 0,
+    "termination_reason": "",
+    "verified": false
+  }
+}
