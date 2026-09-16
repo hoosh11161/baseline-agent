@@ -407,7 +407,7 @@ class VLMAgent(AgentBase):
         phase = str(context.get("step_budget", {}).get("phase") or "")
         if object_in_hand:
             candidates = context.get("placement_candidates") or []
-            if candidates:
+            if candidates and candidates[0].get("direct_safe") is True:
                 location = candidates[0].get("location")
                 if location is not None:
                     return {
@@ -417,7 +417,15 @@ class VLMAgent(AgentBase):
                         "output": 0,
                         "expected_change": "held object leaves the hand near the observed surface",
                     }
-        if self._competition.task_type in {"tidyroom", "jigsaw"}:
+            if phase != "CRITICAL":
+                return {
+                    "think": "placement target is uncertain; refresh public evidence before acting",
+                    "action": "turn_in_degree",
+                    "parameters": {"degree": 45.0},
+                    "output": 0,
+                    "expected_change": "placement candidates gain distinguishing evidence",
+                }
+        elif self._competition.task_type in {"tidyroom", "jigsaw"}:
             remaining = self._competition.progress.expected_objects - self._competition.progress.completed_objects
             for canonical_id in sorted(remaining & self._competition.visible_canonical_ids):
                 item = self._competition.objects.get(canonical_id, {})

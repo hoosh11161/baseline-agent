@@ -96,6 +96,29 @@ class TidyRoomStateTests(unittest.TestCase):
         self.assertEqual(candidates[0]["object_id"], "table")
         self.assertEqual(candidates[0]["location"], [10.0, 10.0, 12.0])
         self.assertEqual(candidates[0]["height_adjustment"], 2.0)
+        self.assertEqual(candidates[0]["confidence"], 0.72)
+        self.assertFalse(candidates[0]["direct_safe"])
+        self.assertIn("world_aabb", candidates[0]["evidence"][0])
+
+    def test_unique_explicit_place_location_is_direct_safe(self) -> None:
+        runtime = self.make_runtime()
+        runtime.observe([{"object_id": "shelf", "name": "shelf", "place_location": [4, 5, 6]}])
+        candidates = runtime.prompt_context()["placement_candidates"]
+        self.assertEqual(candidates[0]["object_id"], "shelf")
+        self.assertEqual(candidates[0]["confidence"], 0.92)
+        self.assertTrue(candidates[0]["direct_safe"])
+
+    def test_equal_explicit_targets_are_not_arbitrarily_selected(self) -> None:
+        runtime = self.make_runtime()
+        runtime.observe(
+            [
+                {"object_id": "shelf-a", "place_location": [1, 2, 3]},
+                {"object_id": "shelf-b", "place_location": [4, 5, 6]},
+            ]
+        )
+        candidates = runtime.prompt_context()["placement_candidates"]
+        self.assertEqual(len(candidates), 2)
+        self.assertFalse(candidates[0]["direct_safe"])
 
     def test_held_object_motion_is_explicit(self) -> None:
         runtime = self.make_runtime()
@@ -121,6 +144,29 @@ class TidyRoomStateTests(unittest.TestCase):
         runtime.progress.completed_objects.add("7")
         runtime.progress.expected_objects.clear()
         runtime.progress.states["7"] = "VERIFIED"
+        decision = runtime.validate_action(
+            {"action": "finish_task", "parameters": {}, "output": 0}, object_in_hand=False
+        )
+        self.assertTrue(decision.valid)
+
+    def test_finish_guard_rejects_cleared_but_unverified_object(self) -> None:
+        runtime = self.make_runtime()
+        runtime.progress.expected_objects.clear()
+        decision = runtime.validate_action(
+            {"action": "finish_task", "parameters": {}, "output": 0}, object_in_hand=False
+        )
+        self.assertFalse(decision.valid)
+        self.assertIn("lack verified completion", decision.error)
+
+    def test_finish_guard_requires_official_evidence_when_coverage_unknown(self) -> None:
+        runtime = CompetitionRuntime()
+        runtime.ensure_episode({"task_type": "tidyroom", "subject": "收拾好房间"})
+        runtime.progress.completed_goal_actions = 1
+        decision = runtime.validate_action(
+            {"action": "finish_task", "parameters": {}, "output": 0}, object_in_hand=False
+        )
+        self.assertFalse(decision.valid)
+        runtime.observe([], {"task_completed": True})
         decision = runtime.validate_action(
             {"action": "finish_task", "parameters": {}, "output": 0}, object_in_hand=False
         )

@@ -26,6 +26,8 @@ EARLY_PHASE_RATIO = 0.65
 MID_PHASE_RATIO = 0.3
 CRITICAL_REMAINING_STEPS = 5
 MAX_RAVEN_ATTEMPTS = 3
+DIRECT_PLACEMENT_CONFIDENCE = 0.85
+DIRECT_PLACEMENT_MARGIN = 0.08
 FAILURE_CATEGORIES = {
     "PERCEPTION",
     "OBJECT_ID",
@@ -1027,7 +1029,16 @@ class CompetitionRuntime:
             current_id = str(item.get("current_object_id") or canonical_id)
             place_location = item.get("place_location")
             if _is_location(place_location):
-                candidates.append({"object_id": current_id, "source": "place_location", "location": place_location})
+                confidence, evidence = self._placement_confidence(item, "place_location")
+                candidates.append(
+                    {
+                        "object_id": current_id,
+                        "source": "place_location",
+                        "location": place_location,
+                        "confidence": confidence,
+                        "evidence": evidence,
+                    }
+                )
                 continue
             bounds = item.get("world_aabb")
             if isinstance(bounds, dict) and isinstance(bounds.get("min"), dict) and isinstance(bounds.get("max"), dict):
@@ -1044,15 +1055,49 @@ class CompetitionRuntime:
                 top = _as_number(upper.get("Z", upper.get("z")))
                 if len(values) == VECTOR_DIMENSIONS - 1 and top is not None:
                     height_adjustment = round((held_half_height or 0.0) + 1.0, 3)
+                    confidence, evidence = self._placement_confidence(item, "world_aabb_top")
                     candidates.append(
                         {
                             "object_id": current_id,
                             "source": "world_aabb_top",
                             "location": [*values, round(top + height_adjustment, 3)],
                             "height_adjustment": height_adjustment,
+                            "confidence": confidence,
+                            "evidence": evidence,
                         }
                     )
+        candidates.sort(key=lambda item: (-float(item["confidence"]), str(item["object_id"])))
+        for index, candidate in enumerate(candidates):
+            next_confidence = float(candidates[index + 1]["confidence"]) if index + 1 < len(candidates) else 0.0
+            margin = max(float(candidate["confidence"]) - next_confidence, 0.0)
+            candidate["selection_margin"] = round(margin, 3)
+            candidate["direct_safe"] = bool(
+                index == 0
+                and float(candidate["confidence"]) >= DIRECT_PLACEMENT_CONFIDENCE
+                and (len(candidates) == 1 or margin >= DIRECT_PLACEMENT_MARGIN)
+            )
+            if index == 0 and not candidate["direct_safe"]:
+                candidate["evidence"].append("direct placement withheld because target selection is ambiguous")
         return candidates
+
+    @staticmethod
+    def _placement_confidence(item: dict[str, Any], source: str) -> tuple[float, list[str]]:
+        if source == "place_location":
+            confidence = 0.92
+            evidence = ["explicit public place_location"]
+        else:
+            confidence = 0.72
+            evidence = ["coordinate estimated from public world_aabb top surface"]
+        seen_count = max(int(item.get("seen_count", 0)), 0)
+        stability_bonus = min(max(seen_count - 1, 0) * 0.02, 0.06)
+        if stability_bonus:
+            confidence += stability_bonus
+            evidence.append(f"surface observed {seen_count} times")
+        identity_confidence = _as_number(item.get("confidence"))
+        if identity_confidence is not None and identity_confidence < 1.0:
+            confidence -= min((1.0 - identity_confidence) * 0.2, 0.12)
+            evidence.append("object identity was merged across perception IDs")
+        return round(min(max(confidence, 0.0), 1.0), 3), evidence
 
     @staticmethod
     def _object_half_height(item: dict[str, Any]) -> float | None:

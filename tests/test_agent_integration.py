@@ -261,6 +261,32 @@ class AgentIntegrationTests(unittest.TestCase):
         self.assertEqual(tongsim.calls, [("turn_in_degree", 45.0)])
         self.assertEqual(agent._competition.metrics.model_failure_count, 2)
 
+    def test_safe_fallback_does_not_place_on_low_confidence_surface(self) -> None:
+        agent, _, _ = self.make_agent("not used")
+        runtime = agent._competition
+        runtime.ensure_episode(
+            {"task_id": "placement-confidence", "task_type": "tidyroom", "movable_object_id": ["1"]}
+        )
+        runtime.observe(
+            [
+                {"object_id": "1", "world_aabb": {"min": {"X": 0, "Y": 0, "Z": 0}, "max": {"X": 2, "Y": 2, "Z": 2}}},
+                {
+                    "object_id": "table",
+                    "world_aabb": {
+                        "min": {"X": 0, "Y": 0, "Z": 0},
+                        "max": {"X": 20, "Y": 20, "Z": 10},
+                    },
+                },
+            ]
+        )
+        runtime.record_action(
+            {"action": "move_and_take_object", "parameters": {"object_id": "1"}}, {"result": "success"}
+        )
+        runtime.update_hand_state(True)
+        action = agent._safe_fallback_action(object_in_hand=True)
+        self.assertIsNotNone(action)
+        self.assertEqual(action["action"], "turn_in_degree")
+
     def test_counting_uses_bounded_scan_then_deterministic_submit(self) -> None:
         agent, tongsim, client = self.make_agent("model must not be called")
         subject = {"task_id": "count-1", "task_type": "counting", "subject": "有多少红色物体"}

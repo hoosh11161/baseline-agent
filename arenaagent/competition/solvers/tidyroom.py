@@ -70,6 +70,7 @@ def _object_position(item: dict[str, Any]) -> list[float] | None:
 @dataclass(slots=True)
 class TidyRoomTracker:
     retry_limit: int = 2
+    initial_expected_objects: set[str] = field(default_factory=set)
     expected_objects: set[str] = field(default_factory=set)
     completed_objects: set[str] = field(default_factory=set)
     failed_objects: set[str] = field(default_factory=set)
@@ -85,6 +86,7 @@ class TidyRoomTracker:
 
     def reset(self, subject: dict[str, Any]) -> None:
         self.expected_objects = _as_ids(subject.get("movable_object_id")) | _as_ids(subject.get("piece_object_id"))
+        self.initial_expected_objects = set(self.expected_objects)
         self.completed_objects = set()
         self.failed_objects = set()
         self.states = {object_id: "DISCOVERED" for object_id in self.expected_objects}
@@ -208,17 +210,19 @@ class TidyRoomTracker:
             return True, "not a behavior task"
         if object_in_hand or self.current_object or self.pending_pick or self.pending_place:
             return False, "an object is held or awaiting pick/place verification"
-        if self.expected_objects:
-            return False, f"unfinished objects remain: {sorted(self.expected_objects)}"
         if self.completion_evidence:
             return True, "official task response reports completion"
-        if self.completed_objects or self.completed_goal_actions:
-            return True, "at least one goal action was verified and no known subgoal remains"
-        return False, "no verified completion evidence"
+        unverified = self.initial_expected_objects - self.completed_objects
+        if unverified:
+            return False, f"official objects lack verified completion: {sorted(unverified)}"
+        if self.initial_expected_objects:
+            return True, "all official objects have observation-verified completion"
+        return False, "task coverage is unknown and no official completion evidence exists"
 
     def context(self) -> dict[str, Any]:
         return {
             "states": dict(sorted(self.states.items())),
+            "initial_objects": sorted(self.initial_expected_objects),
             "completed_objects": sorted(self.completed_objects),
             "failed_objects": sorted(self.failed_objects),
             "current_object": self.current_object,
@@ -228,5 +232,6 @@ class TidyRoomTracker:
             "pending_place_mode": self.pending_place_mode,
             "retry_count": dict(sorted(self.retries.items())),
             "remaining_objects": sorted(self.expected_objects),
+            "completed_goal_actions": self.completed_goal_actions,
             "completion_evidence": self.completion_evidence,
         }
