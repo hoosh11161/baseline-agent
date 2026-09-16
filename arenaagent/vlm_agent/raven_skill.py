@@ -15,6 +15,7 @@ from typing import Any
 from loguru import logger
 from PIL import Image
 
+from arenaagent.competition.solvers.raven import RavenDecision
 from arenaagent.vlm_agent.skills.raven import crop_group_image_to_subplots, solve_raven
 
 
@@ -25,33 +26,45 @@ def _fail(agent: Any, error: str) -> dict[str, Any]:
     return {"result": "failed", "error": str(error)}
 
 
-def run_raven_inference(image_list: list[list[Image.Image]], structure: list[Any]) -> list[list[int]] | None:
-    """Run the Raven model and normalize its predictions."""
+def run_raven_inference_details(
+    image_list: list[list[Image.Image]], structure: list[Any]
+) -> RavenDecision | None:
+    """Run the local Raven model and retain ranked confidence evidence."""
     argv_backup = sys.argv[:]
     try:
         # solve_raven internally calls argparse.parse_args(), isolate from process args.
         sys.argv = [argv_backup[0]] if argv_backup else [""]
-        prediction = solve_raven(image_list=image_list, structure=structure)
+        prediction = solve_raven(image_list=image_list, structure=structure, return_scores=True)
     except Exception as exc:
         logger.warning("solve_raven api call failed: {}", exc)
         return None
     finally:
         sys.argv = argv_backup
 
-    if hasattr(prediction, "tolist"):
-        prediction = prediction.tolist()
-    if not isinstance(prediction, list) or not prediction:
+    if not isinstance(prediction, dict):
+        return None
+
+    raw_candidates = prediction.get("candidates")
+    raw_scores = prediction.get("scores")
+    if not isinstance(raw_candidates, list) or not raw_candidates:
         return None
 
     normalized: list[list[int]] = []
-    for triple in prediction:
+    for triple in raw_candidates:
         if not isinstance(triple, (list, tuple)) or len(triple) != 3:
             continue
         try:
             normalized.append([int(triple[0]), int(triple[1]), int(triple[2])])
         except Exception:
             continue
-    return normalized or None
+    scores = [float(value) for value in raw_scores] if isinstance(raw_scores, list) else []
+    return RavenDecision.from_ranked(normalized, scores)
+
+
+def run_raven_inference(image_list: list[list[Image.Image]], structure: list[Any]) -> list[list[int]] | None:
+    """Compatibility wrapper returning ranked answer triples."""
+    decision = run_raven_inference_details(image_list, structure)
+    return decision.candidates if decision else None
 
 
 def get_raven_ranked_candidates(
@@ -68,13 +81,16 @@ def get_raven_ranked_candidates(
     if cache_key in cache:
         return cache[cache_key]
 
-    candidates = run_raven_inference(image_list=image_list, structure=structure)
-    if not candidates:
+    decision = run_raven_inference_details(image_list=image_list, structure=structure)
+    if not decision:
         return None
 
-    cache[cache_key] = candidates
+    cache[cache_key] = decision.candidates
+    decision_cache = getattr(agent, "_raven_decision_cache", None)
+    if isinstance(decision_cache, dict):
+        decision_cache[cache_key] = decision
     next_index.setdefault(cache_key, 0)
-    return candidates
+    return decision.candidates
 
 
 def normalize_raven_image_list(raw_image_list: Any) -> list[list[Image.Image]] | None:
@@ -425,6 +441,12 @@ def handle(agent: Any, params: dict[str, Any], action: dict[str, Any]) -> dict[s
     attempt_index = raven_next_index.get(cache_key, 0)
     used_index = min(attempt_index, len(ranked_candidates) - 1)
     chosen_answer = ranked_candidates[used_index]
+
+    decision_cache = getattr(agent, "_raven_decision_cache", None)
+    decision = decision_cache.get(cache_key) if isinstance(decision_cache, dict) else None
+    competition = getattr(agent, "_competition", None)
+    if isinstance(decision, RavenDecision) and competition is not None:
+        competition.set_strategy_context(decision.context(attempt_index=used_index))
 
     if attempt_index < len(ranked_candidates) - 1:
         raven_next_index[cache_key] = attempt_index + 1

@@ -86,6 +86,7 @@ class VLMAgent(AgentBase):
         self._movable_objects: list[Any] = []
         self._action_histories: list[dict[str, Any]] = []
         self._raven_candidates_cache: dict[str, list[list[int]]] = {}
+        self._raven_decision_cache: dict[str, Any] = {}
         self._raven_next_index: dict[str, int] = {}
         self._raven_image_temp_path: str = ""
         self._competition = CompetitionRuntime(

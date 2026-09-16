@@ -347,7 +347,7 @@ def crop_group_image_to_subplots(
         f"已基于坐标从 {os.path.basename(image_path)} 裁剪出 {saved} 张子图，保存到: {subfolder}"
     )
 
-def solve_raven(image_list, structure=None):
+def solve_raven(image_list, structure=None, return_scores=False):
     parser = argparse.ArgumentParser(description='our_model')
     parser.add_argument('--model', type=str, default='Resnet18_MLP')
     parser.add_argument('--seed', type=int, default=12345)
@@ -446,6 +446,12 @@ def solve_raven(image_list, structure=None):
     # 按概率排序
     sorted_idx = torch.argsort(triple_probs, descending=True)
     sorted_triples = triple_labels[sorted_idx]
+    if return_scores:
+        sorted_probs = triple_probs[sorted_idx]
+        return {
+            "candidates": sorted_triples.tolist(),
+            "scores": [float(value) for value in sorted_probs.tolist()],
+        }
     return sorted_triples.tolist()
 
 
