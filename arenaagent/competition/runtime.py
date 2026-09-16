@@ -10,6 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from arenaagent.competition.evaluation.postconditions import (
+    POSTCONDITION_FAILURE,
+    POSTCONDITION_SUCCESS,
+    POSTCONDITION_UNKNOWN,
+    ActionExpectation,
+    PhysicalPostconditionTracker,
+)
 from arenaagent.competition.solvers.npc import NPCMemory
 from arenaagent.competition.solvers.tidyroom import TidyRoomTracker
 
@@ -21,18 +28,25 @@ CRITICAL_REMAINING_STEPS = 5
 MAX_RAVEN_ATTEMPTS = 3
 FAILURE_CATEGORIES = {
     "PERCEPTION",
+    "OBJECT_ID",
+    "COUNTING_QUERY",
     "COUNT_DUPLICATION",
     "PLANNING",
     "INVALID_ACTION",
     "NAVIGATION",
+    "PICK",
     "PLACEMENT",
-    "NPC_REASONING",
+    "PHYSICAL_POSTCONDITION",
+    "NPC_MISSING_FACT",
+    "NPC_BAD_QUESTION",
     "RAVEN_REASONING",
-    "JIGSAW_SPATIAL",
-    "JSON_PARSE",
+    "JIGSAW_GRID",
+    "JIGSAW_ROTATION",
+    "JSON",
     "MODEL_API",
     "LOOP",
     "PREMATURE_FINISH",
+    "TIME_BUDGET",
     "UNKNOWN",
 }
 OBJECT_ACTIONS = {
@@ -220,7 +234,7 @@ def _extract_numeric(value: Any, keys: tuple[str, ...]) -> float | None:
     return None
 
 
-def classify_failure(  # noqa: PLR0911
+def classify_failure(  # noqa: PLR0911, PLR0912
     failure_class: str, error: str, action: Any, task_type: str
 ) -> str:
     raw = str(failure_class or "").upper()
@@ -229,7 +243,7 @@ def classify_failure(  # noqa: PLR0911
     if raw in FAILURE_CATEGORIES:
         return raw
     if raw == "PERCEPTION_ERROR":
-        return "PERCEPTION"
+        return "OBJECT_ID" if "object_id" in message else "PERCEPTION"
     if raw == "MODEL_ERROR":
         return "MODEL_API"
     if raw == "LOOP_ERROR":
@@ -237,20 +251,24 @@ def classify_failure(  # noqa: PLR0911
     if raw in {"TERMINATION_ERROR", "PREMATURE_FINISH"}:
         return "PREMATURE_FINISH"
     if raw == "MEMORY_ERROR":
-        return "NPC_REASONING" if task_type == "npc" else "PLANNING"
+        return "NPC_BAD_QUESTION" if task_type == "npc" else "PLANNING"
+    if raw in {"NPC_BAD_QUESTION", "NPC_MISSING_FACT", "PHYSICAL_POSTCONDITION", "TIME_BUDGET"}:
+        return raw
     if raw == "REASONING_ERROR":
         return {
             "raven": "RAVEN_REASONING",
-            "jigsaw": "JIGSAW_SPATIAL",
-            "npc": "NPC_REASONING",
+            "jigsaw": "JIGSAW_ROTATION" if "rotation" in message else "JIGSAW_GRID",
+            "npc": "NPC_MISSING_FACT",
         }.get(task_type, "PLANNING")
     if raw == "ACTION_ERROR":
         if name in {"put_down_sth", "move_and_put_down", "move_and_put_down_object_in_container"}:
             return "PLACEMENT"
+        if name == "move_and_take_object":
+            return "PICK"
         if name.startswith("move_") or name in {"turn_in_degree", "turn_around_to_degree"}:
             return "NAVIGATION"
         if "malformed" in message or "missing action" in message or "empty" in message:
-            return "JSON_PARSE"
+            return "JSON"
         return "INVALID_ACTION"
     return "UNKNOWN"
 
@@ -283,6 +301,9 @@ class EpisodeMetrics:
     perception_errors: int = 0
     repeated_actions: int = 0
     finish_guard_blocks: int = 0
+    postcondition_successes: int = 0
+    postcondition_failures: int = 0
+    postcondition_unknowns: int = 0
     termination_reason: str = ""
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     finished_at: str = ""
@@ -330,6 +351,7 @@ class CompetitionRuntime:
         self.strategy_context: dict[str, Any] = {}
         self.progress = TidyRoomTracker(retry_limit=self.repeated_action_limit)
         self.npc_memory = NPCMemory()
+        self.postconditions = PhysicalPostconditionTracker()
         self._started_monotonic = 0.0
         self._last_subject_key = ""
 
@@ -372,6 +394,7 @@ class CompetitionRuntime:
         self.strategy_context = {}
         self.progress.reset(subject_dict)
         self.npc_memory.reset(subject_dict)
+        self.postconditions.reset()
         self._started_monotonic = time.perf_counter()
         self._last_subject_key = subject_key
 
@@ -459,6 +482,13 @@ class CompetitionRuntime:
         ):
             self.metrics.stuck_count += 1
         self._capture_npc_facts(task_response)
+        self._record_postcondition_events(
+            self.postconditions.observe(
+                self.objects,
+                self.visible_canonical_ids,
+                official_completion=self._has_completion_evidence(task_response),
+            )
+        )
         self.progress.observe(self.objects, self._has_completion_evidence(task_response))
 
     @staticmethod
@@ -475,6 +505,13 @@ class CompetitionRuntime:
     def update_hand_state(self, has_object: bool) -> None:
         observation_step = self.metrics.steps if self.metrics is not None else None
         self.progress.update_hand_state(bool(has_object), self.objects, observation_step)
+        self._record_postcondition_events(
+            self.postconditions.update_hand_state(
+                bool(has_object),
+                self.objects,
+                observation_step=observation_step,
+            )
+        )
 
     def _secondary_object_match(self, raw: dict[str, Any], tolerance: float = 5.0) -> str | None:
         """Match a remapped perception ID only with strong public-position evidence."""
@@ -810,7 +847,7 @@ class CompetitionRuntime:
             self.failed_signatures[signature] += 1
             if validation is None or validation.valid:
                 self.metrics.retries += 1
-                self._capture_failure("ACTION_ERROR", str(result), action)
+                self._capture_failure("ACTION_ERROR", str(result), action, step=self.metrics.steps)
         name = str(action.get("action") or "").lower()
         params = action.get("parameters") or {}
         raw_object_id = next(
@@ -821,7 +858,20 @@ class CompetitionRuntime:
             ),
             "",
         )
-        self.progress.record_action(action, result, self.object_aliases.get(raw_object_id, raw_object_id))
+        canonical_object_id = (
+            self.object_aliases.get(raw_object_id, raw_object_id) or self.progress.current_object or ""
+        )
+        self.progress.record_action(action, result, canonical_object_id)
+        if not failed:
+            self._record_postcondition_events(
+                self.postconditions.start(
+                    action,
+                    object_id=canonical_object_id,
+                    objects=self.objects,
+                    visible_ids=self.visible_canonical_ids,
+                    step=self.metrics.steps,
+                )
+            )
         if name == "speak_to_npc" and not failed:
             params = action.get("parameters") or {}
             target = str(next((params[key] for key in ("npc_name", "npc", "target", "name") if params.get(key)), ""))
@@ -835,14 +885,36 @@ class CompetitionRuntime:
                 "action": _canonical(action),
                 "result": _canonical(result),
                 "failed": bool(failed),
+                "postcondition": (
+                    self.postconditions.pending.context() if self.postconditions.pending is not None else None
+                ),
             }
         )
         self.action_records = self.action_records[-50:]
 
-    def _capture_failure(self, failure_class: str, error: str, action: Any) -> None:
+    def _record_postcondition_events(self, events: list[ActionExpectation]) -> None:
+        if self.metrics is None:
+            return
+        for event in events:
+            if event.status == POSTCONDITION_SUCCESS:
+                self.metrics.postcondition_successes += 1
+            elif event.status == POSTCONDITION_FAILURE:
+                self.metrics.postcondition_failures += 1
+                self.metrics.retries += 1
+                self.metrics.replans += 1
+                self._capture_failure(
+                    "PHYSICAL_POSTCONDITION",
+                    event.reason,
+                    {"action": event.action},
+                    step=event.created_step,
+                )
+            elif event.status == POSTCONDITION_UNKNOWN:
+                self.metrics.postcondition_unknowns += 1
+
+    def _capture_failure(self, failure_class: str, error: str, action: Any, *, step: int | None = None) -> None:
         if self.first_failure is None:
             self.first_failure = {
-                "step": (self.metrics.steps + 1) if self.metrics else 0,
+                "step": int(step) if step is not None else (self.metrics.steps + 1) if self.metrics else 0,
                 "error_type": failure_class,
                 "category": classify_failure(failure_class, error, action, self.task_type),
                 "message": str(error),
@@ -874,6 +946,10 @@ class CompetitionRuntime:
             or self.metrics.repeated_actions > 0
             or blocked_failed_actions > 0
             or recent_failure_class in {"MODEL_ERROR", "PERCEPTION_ERROR"}
+            or bool(
+                self.postconditions.history
+                and self.postconditions.history[-1].status in {POSTCONDITION_FAILURE, POSTCONDITION_UNKNOWN}
+            )
         )
         return {
             "task_type": self.task_type,
@@ -907,6 +983,7 @@ class CompetitionRuntime:
             },
             "strategy": self.strategy_context,
             "task_progress": self.progress.context(),
+            "action_postconditions": self.postconditions.context(),
             "placement_candidates": self._placement_candidates(),
         }
 
@@ -1003,6 +1080,7 @@ class CompetitionRuntime:
             "npc_facts": self.npc_facts,
             "recent_actions": self.action_records,
             "task_progress": self.progress.context(),
+            "action_postconditions": self.postconditions.context(),
         }
         self._write_artifacts(payload)
         self.metrics = None

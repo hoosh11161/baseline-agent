@@ -10,18 +10,25 @@ from arenaagent.competition.training_data import OFFICIAL_TERMINATION
 
 RECOMMENDATIONS = {
     "PERCEPTION": "Inspect visibility changes and object-ID mapping before changing the planner.",
+    "OBJECT_ID": "Inspect the first invalid visible-ID mapping and refresh perception before object actions.",
+    "COUNTING_QUERY": "Inspect the parsed boolean filter expression and fall back when query semantics are uncertain.",
     "COUNT_DUPLICATION": "Tune position-aware deduplication using public observations from the failed seeds.",
     "PLANNING": "Inspect the first wrong subgoal and add a deterministic task-state transition.",
     "INVALID_ACTION": "Tighten action schema generation or add a pre-execution normalization rule.",
     "NAVIGATION": "Compare target selection and motion result across the failing public traces.",
+    "PICK": "Verify hand state and target visibility, then use a bounded alternative pickup approach.",
     "PLACEMENT": "Use observed place_location or AABB evidence and verify the hand-state transition.",
-    "NPC_REASONING": "Repair entity/question memory or final answer synthesis from recorded replies.",
+    "PHYSICAL_POSTCONDITION": "Inspect the first expected state change and preserve UNKNOWN when evidence is absent.",
+    "NPC_MISSING_FACT": "Extract the required fact and ask the highest-information allowed NPC.",
+    "NPC_BAD_QUESTION": "Reject duplicate or irrelevant questions and follow recorded owner/redirect evidence.",
     "RAVEN_REASONING": "Inspect ranked candidate margins and crop compatibility on official screenshots.",
-    "JIGSAW_SPATIAL": "Inspect inferred grid cells and legal rotations from public spatial evidence.",
-    "JSON_PARSE": "Constrain the model response to one action object and inspect the raw response.",
+    "JIGSAW_GRID": "Inspect inferred grid cells and piece-to-cell assignments from public spatial evidence.",
+    "JIGSAW_ROTATION": "Inspect bounded legal rotation evidence for the first rejected piece.",
+    "JSON": "Constrain the model response to one action object and inspect the raw response.",
     "MODEL_API": "Compare retry, latency, and error rates before selecting a model.",
     "LOOP": "Change the recovery observation or subgoal after the first repeated signature.",
     "PREMATURE_FINISH": "Require task-specific completion evidence before terminal actions.",
+    "TIME_BUDGET": "Stop low-value exploration and choose the highest-probability direct progress action.",
     "UNKNOWN": "Inspect the raw first-critical-error payload and extend the taxonomy.",
 }
 MAX_FAILURE_EXAMPLES = 3
