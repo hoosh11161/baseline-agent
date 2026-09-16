@@ -109,7 +109,6 @@ class CountingSolver:
 
         filters = self._filters_from_query(normalized_query, objects)
         grouped = any(_normalize(word) in normalized_query for word in GROUP_WORDS)
-        grouped = grouped or self._has_same_field_alternatives(filters)
         if not filters:
             matched_ids = sorted(objects)
             result = CountingResult(
@@ -127,9 +126,7 @@ class CountingSolver:
             f"{item.field}={item.value}": sum(self._matches(obj, [item]) for obj in objects.values())
             for item in filters
         }
-        matched_ids = sorted(
-            object_id for object_id, obj in objects.items() if self._matches(obj, filters)
-        )
+        matched_ids = sorted(object_id for object_id, obj in objects.items() if self._matches(obj, filters))
         answer = None if grouped else len(matched_ids)
         reason = (
             "multiple requested groups require evaluator-specific output formatting"
@@ -154,15 +151,13 @@ class CountingSolver:
             item["counted"] = object_id in matched_ids
 
     @staticmethod
-    def _has_same_field_alternatives(filters: list[CountFilter]) -> bool:
-        fields = [item.field for item in filters]
-        return len(fields) != len(set(fields))
-
-    @staticmethod
     def _matches(obj: dict[str, Any], filters: list[CountFilter]) -> bool:
+        alternatives_by_field: dict[str, set[str]] = {}
         for item in filters:
-            actual = _normalize(obj.get(item.field))
-            if actual != _normalize(item.value):
+            alternatives_by_field.setdefault(item.field, set()).add(_normalize(item.value))
+        for field_name, accepted_values in alternatives_by_field.items():
+            actual = _normalize(obj.get(field_name))
+            if actual not in accepted_values:
                 return False
         return True
 

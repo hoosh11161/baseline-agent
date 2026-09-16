@@ -175,7 +175,6 @@ class VLMAgent(AgentBase):
         self._last_visible_objects_info = visible_objects_info or []
         image_data = self._to_data_url(b64_image)
         self._competition.observe(visible_objects_info, task_response)
-        self._task_router.observe(self._competition, subject)
 
         logger.debug(
             "Perception acquired: image size={}, visible objects={}",
@@ -197,6 +196,9 @@ class VLMAgent(AgentBase):
             except Exception as exc:
                 logger.warning(f"获取手中物体失败: {exc}")
         self._competition.update_hand_state(bool(object_in_hand))
+        # Strategy state must be derived after hand/pick/place verification so
+        # a failed Jigsaw placement advances its rotation in the same turn.
+        self._task_router.observe(self._competition, subject)
 
         # 4: 生成大模型 prompt
         api_info = self._load_api_info()

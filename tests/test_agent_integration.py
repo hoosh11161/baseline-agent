@@ -70,6 +70,17 @@ class RaisingTongSim(FakeTongSim):
         raise ConnectionError("perception unavailable")
 
 
+class JigsawFailureTongSim(FakeTongSim):
+    def acquire_first_person_perception(self, character_id, width=None, height=None):
+        return {
+            "image": None,
+            "objects": [
+                {"object_id": "1", "name": "piece", "position": [99, 25, 25]},
+                {"object_id": "placed", "name": "reference", "position": [10, 25, 25]},
+            ],
+        }
+
+
 class AgentIntegrationTests(unittest.TestCase):
     def make_agent(self, response_text: str) -> tuple[PreliminaryBaselineAgent, FakeTongSim, FakeClient]:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -197,6 +208,37 @@ class AgentIntegrationTests(unittest.TestCase):
             tongsim.calls,
             [("turn_in_degree", 90.0), ("turn_in_degree", 180.0), ("turn_in_degree", 270.0)],
         )
+
+    def test_jigsaw_failure_advances_rotation_before_same_turn_prompt(self) -> None:
+        agent, _, _ = self.make_agent('[{"action":"turn_in_degree","parameters":{"degree":45},"output":0}]')
+        agent.tongsim = JigsawFailureTongSim()
+        subject = {
+            "task_id": "jigsaw-retry-1",
+            "task_type": "jigsaw",
+            "subject": "完成拼图",
+            "reference_bounding": [0, 100, 100, 0],
+            "rows": 2,
+            "columns": 2,
+            "piece_object_id": ["1"],
+        }
+        agent._competition.ensure_episode(subject)
+        agent._competition.observe([{"object_id": "1", "position": [99, 25, 25]}])
+        agent._competition.record_action(
+            {"action": "move_and_take_object", "parameters": {"object_id": "1"}},
+            {"result": "success"},
+        )
+        agent._competition.update_hand_state(True)
+        agent._competition.record_action(
+            {"action": "put_down_sth", "parameters": {"target_location": [10, 75, 25]}},
+            {"result": "success"},
+        )
+
+        result = agent.run_step(subject, {})
+
+        self.assertEqual(result["result"], "success")
+        piece = agent._competition.strategy_context["pieces"][0]
+        self.assertEqual(piece["rotation_attempt"], 1)
+        self.assertEqual(piece["candidate_rotation"]["yaw"], 90.0)
 
     def test_invalid_model_action_gets_one_bounded_repair(self) -> None:
         agent, tongsim, _ = self.make_agent("not used")

@@ -26,7 +26,9 @@ class TaskStrategyRouter:
         if runtime.task_type == "counting":
             self.counting.observe(runtime.metrics.episode_id)
         elif runtime.task_type == "jigsaw" and isinstance(subject, dict):
-            runtime.set_strategy_context(self.jigsaw.infer(subject, runtime.objects).context())
+            runtime.set_strategy_context(
+                self.jigsaw.infer(subject, runtime.objects, dict(runtime.progress.retries)).context()
+            )
 
     def propose_action(self, subject: Any, runtime: CompetitionRuntime) -> dict[str, Any] | None:
         if runtime.task_type != "counting" or runtime.metrics is None:

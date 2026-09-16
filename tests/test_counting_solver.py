@@ -25,6 +25,18 @@ class CountingSolverTests(unittest.TestCase):
         self.assertIsNone(result.answer)
         self.assertEqual(result.grouped_counts, {"color=Blue": 1, "color=Red": 2})
 
+    def test_same_field_alternatives_are_counted_as_union_for_one_total(self) -> None:
+        result = CountingSolver().solve("红色或蓝色物体总共有多少", self.objects)
+        self.assertTrue(result.confident)
+        self.assertEqual(result.answer, 3)
+        self.assertEqual(result.matched_ids, ["1", "2", "3"])
+
+    def test_alternatives_with_another_attribute_use_or_then_and(self) -> None:
+        result = CountingSolver().solve("红色或蓝色球体总共有多少", self.objects)
+        self.assertTrue(result.confident)
+        self.assertEqual(result.answer, 1)
+        self.assertEqual(result.matched_ids, ["3"])
+
     def test_multiple_attributes_are_combined(self) -> None:
         result = CountingSolver().solve("有多少红色球体", self.objects)
         self.assertTrue(result.confident)
