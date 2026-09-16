@@ -18,7 +18,7 @@ class JigsawSolverTests(unittest.TestCase):
         self.assertEqual(plan.y_centers, [25.0, 75.0])
         self.assertEqual(plan.z_centers, [25.0, 75.0])
         self.assertEqual(len(plan.missing_cells), 3)
-        self.assertEqual(plan.pieces[0].candidate_position, [0.0, 75.0, 25.0])
+        self.assertEqual(plan.pieces[0].candidate_position, [10.0, 75.0, 25.0])
         self.assertGreaterEqual(plan.confidence, 0.8)
 
     def test_no_case_specific_coordinates_without_public_bounds(self) -> None:
@@ -37,6 +37,17 @@ class JigsawSolverTests(unittest.TestCase):
         self.assertEqual(plan.y_centers, [25.0, 75.0])
         self.assertEqual(plan.z_centers, [25.0, 75.0])
         self.assertEqual(plan.missing_cells, [{"y": 75.0, "z": 75.0}])
+
+    def test_grid_without_observed_x_plane_does_not_invent_coordinate(self) -> None:
+        subject = {
+            "reference_bounding": [0, 100, 100, 0],
+            "rows": 2,
+            "columns": 2,
+            "piece_object_id": ["piece-a"],
+        }
+        plan = JigsawSpatialSolver().infer(subject, {})
+        self.assertIsNone(plan.pieces[0].candidate_position)
+        self.assertIn("no public X-plane evidence", plan.reason)
 
 
 if __name__ == "__main__":

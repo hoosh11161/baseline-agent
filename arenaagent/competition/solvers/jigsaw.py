@@ -143,6 +143,7 @@ class JigsawSpatialSolver:
             (self._nearest(position[1], y_centers), self._nearest(position[2], z_centers))
             for position in positions.values()
         }
+        x_plane = round(median(position[0] for position in positions.values()), 3) if positions else None
         missing = [
             {"y": y_value, "z": z_value}
             for z_value in z_centers
@@ -154,9 +155,10 @@ class JigsawSpatialSolver:
             PieceState(object_id=value, current_position=_position(objects.get(value, {}))) for value in piece_ids
         ]
         for piece, cell in zip(pieces, missing, strict=False):
-            piece.candidate_position = [0.0, cell["y"], cell["z"]]
-            piece.candidate_rotation = {"roll": 0.0, "yaw": 0.0, "pitch": 0.0}
-            piece.confidence = 0.8 if rows and columns else 0.55
+            if x_plane is not None:
+                piece.candidate_position = [x_plane, cell["y"], cell["z"]]
+                piece.candidate_rotation = {"roll": 0.0, "yaw": 0.0, "pitch": 0.0}
+                piece.confidence = 0.8 if rows and columns else 0.55
         enough_observed_centers = (
             len(observed_y) >= MIN_GRID_CENTERS and len(observed_z) >= MIN_GRID_CENTERS
         )
@@ -167,7 +169,11 @@ class JigsawSpatialSolver:
             missing_cells=missing,
             pieces=pieces,
             confidence=confidence,
-            reason="grid inferred from reference bounds and public object positions",
+            reason=(
+                "grid and placement plane inferred from reference bounds and public object positions"
+                if x_plane is not None
+                else "grid inferred, but no public X-plane evidence exists for a safe placement coordinate"
+            ),
         )
 
     @staticmethod
