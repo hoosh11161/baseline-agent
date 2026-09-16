@@ -1,0 +1,48 @@
+{
+  "subject": {
+    "task_id": "offline-replay-example",
+    "task_type": "tidyroom",
+    "subject": "整理房间"
+  },
+  "steps": [
+    {
+      "visible_objects": [
+        {
+          "object_id": "7",
+          "name": "cup"
+        }
+      ],
+      "object_in_hand_before": false,
+      "action": {
+        "action": "move_to_object",
+        "parameters": {
+          "object_id": "7"
+        }
+      },
+      "expected_valid": true,
+      "result": {
+        "result": "success"
+      }
+    },
+    {
+      "visible_objects": [
+        {
+          "object_id": "7",
+          "name": "cup"
+        }
+      ],
+      "object_in_hand_before": false,
+      "action": {
+        "action": "move_and_take_object",
+        "parameters": {
+          "object_id": "999"
+        }
+      },
+      "expected_valid": false,
+      "result": {
+        "result": "failed",
+        "reason": "locally blocked"
+      }
+    }
+  ]
+}
