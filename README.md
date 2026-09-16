@@ -31,3 +31,27 @@
 
 ## 声明
 我们不强制要求必须使用大模型，你可以使用任意算法实现任务。
+
+## 竞赛优化分支
+
+`competition-optimization` 分支在不修改官方协议、不读取隐藏状态的前提下加入了：
+
+- 动作 schema、当前可见 object ID、坐标、手持状态和终止动作校验；
+- 基于稳定 object ID 的世界状态、计数去重、观察差异、NPC 事实与步数预算；
+- 重复动作/停滞检测和失败分类；
+- 每局 JSON 指标、`failure_report.json` 和 benchmark 汇总；
+- Raven 本地模型直连，避免额外 VLM 决策；
+- 安全的模型 JSON 解析以及可安装环境下的 protobuf 导入修复。
+
+Windows 上可以执行：
+
+```powershell
+uv sync --extra dev
+uv run python scripts/generate_pb2.py
+uv run python -m pytest -q
+uv run python scripts/preflight.py --release-dir "C:\path\to\official\release"
+.\scripts\run_preliminary.ps1 -Model VLMGPT5Config -RunTimes 5
+uv run python scripts/benchmark.py
+```
+
+真实得分只会从官方任务服务返回的评测结果生成。完整边界、当前验证结果和后续 A/B 流程见 [COMPETITION_REPORT.md](COMPETITION_REPORT.md)。

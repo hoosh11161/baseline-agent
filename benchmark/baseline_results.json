@@ -1,0 +1,13 @@
+{
+  "status": "NOT_VERIFIED",
+  "reason": "The official Windows/Linux competition client and task-service binaries were not available on this machine at baseline capture time.",
+  "baseline_git_commit": "3cfe5dfb7c7764d8575eaf87c733ee8cd0e941c6",
+  "baseline_git_tag": "baseline-original",
+  "results": [
+    {"task_type": "tidyroom", "success": null, "score": null, "steps": null},
+    {"task_type": "counting", "success": null, "score": null, "steps": null},
+    {"task_type": "npc", "success": null, "score": null, "steps": null},
+    {"task_type": "raven", "success": null, "score": null, "steps": null},
+    {"task_type": "jigsaw", "success": null, "score": null, "steps": null}
+  ]
+}
