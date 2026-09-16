@@ -149,7 +149,7 @@ def group_image_to_raven_list(group_image: Any) -> list[list[Image.Image]] | Non
 
 
 def materialize_group_image(value: Any) -> str | None:
-    out_dir = "/tmp/raven_input_images"
+    out_dir = os.path.join(tempfile.gettempdir(), "arenaagent_raven_input_images")
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"group_{int(time.time() * 1000)}_{os.getpid()}.png")
 

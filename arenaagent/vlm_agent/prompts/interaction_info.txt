@@ -1,19 +1,17 @@
-当前任务是"{self.task_text}"
-当前任务提示（如有）:"{self.task_prompt}"
-NPC回复（如有）:"{self.npc_reply}"
-NPC任务提示（如有）:{self.npc_subject}
+Current task: "{self.task_text}"
+Task-specific official/baseline hint: "{self.task_prompt}"
 
-当前视野物体信息如下：
-其中 object_id 是组合图右侧标注的映射 ID，也是物体动作唯一允许使用的 ID。
-[
-  {self.visiable_objects_info}
-]
+Structured competition state:
+{self.competition_state}
 
-上一轮执行状态如下：
-- 动作执行结果: {self.action_res}
-- 任务结果: {self.apply_resp}
+Current visible objects (object_id values are the only valid IDs for object actions):
+{self.visiable_objects_info}
 
-在此之前，你已经执行了以下动作：
-[
-  {self.action_histories}
-]
+NPC reply, if any: "{self.npc_reply}"
+NPC task hints, if any: {self.npc_subject}
+
+Previous environment action result: {self.action_res}
+Previous official task-service response: {self.apply_resp}
+Recent actions: {self.action_histories}
+
+Choose exactly one next action. Base it only on current evidence and the official action schemas.

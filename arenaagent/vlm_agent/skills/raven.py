@@ -207,7 +207,7 @@ class mlp_module(nn.Module):
 class Resnet18_MLP(BasicModel):
     def __init__(self, args):
         super(Resnet18_MLP, self).__init__(args)
-        self.resnet18 = models.resnet18(pretrained=False)
+        self.resnet18 = models.resnet18(weights=None)
         self.resnet18.conv1 = nn.Conv2d(16, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.resnet18.fc = identity()
         self.mlp = mlp_module()
@@ -347,7 +347,7 @@ def crop_group_image_to_subplots(
         f"已基于坐标从 {os.path.basename(image_path)} 裁剪出 {saved} 张子图，保存到: {subfolder}"
     )
 
-def solve_raven(image_list, structure=[]):
+def solve_raven(image_list, structure=None):
     parser = argparse.ArgumentParser(description='our_model')
     parser.add_argument('--model', type=str, default='Resnet18_MLP')
     parser.add_argument('--seed', type=int, default=12345)
@@ -366,7 +366,12 @@ def solve_raven(image_list, structure=[]):
     parser.add_argument('--meta_beta', type=float, default=0.0)
 
 
-    args = parser.parse_args()
+    # This solver runs inside the arenaagent process; never consume the CLI's
+    # unrelated arguments (for example ``--config``) here.
+    args = parser.parse_args([])
+    structure = structure or []
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     model = Resnet18_MLP(args)
     model_path = args.save if os.path.isabs(args.save) else os.path.join(SKILLS_DIR, args.save)
     model.load_model(model_path, 0)
@@ -409,9 +414,11 @@ def solve_raven(image_list, structure=[]):
         except TypeError:
             # Fallback for older numpy versions without encoding arg
             embeddings = np.load(EMBEDDING_PATH, allow_pickle=True)
+        embedding_values = embeddings.item()
         for element in structure:
-            if element != '/':
-                embedding[element_idx, :] = torch.tensor(embeddings.item().get(element), dtype=torch.float)
+            value = embedding_values.get(element)
+            if element != '/' and value is not None and element_idx < 6:
+                embedding[element_idx, :] = torch.tensor(value, dtype=torch.float)
                 element_idx += 1
         if element_idx == 6:
             indicator[0] = 1.
