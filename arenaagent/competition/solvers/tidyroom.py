@@ -49,7 +49,8 @@ class TidyRoomTracker:
         self.completion_evidence = self.completion_evidence or bool(completion_evidence)
         for object_id in known_objects:
             if object_id in self.expected_objects:
-                self.states.setdefault(object_id, "DISCOVERED")
+                if self.states.get(object_id, "DISCOVERED") == "DISCOVERED":
+                    self.states[object_id] = "TARGET_IDENTIFIED"
 
     def update_hand_state(self, has_object: bool) -> None:
         if self.pending_pick is not None:
@@ -85,6 +86,8 @@ class TidyRoomTracker:
             self.current_object = object_id
             self.pending_pick = object_id
             self.states[object_id] = "APPROACHING"
+        elif name in {"move_to_location", "move_forward", "move_backward"} and self.current_object:
+            self.states[self.current_object] = "MOVING"
         elif name in {"put_down_sth", "move_and_put_down", "move_and_put_down_object_in_container"}:
             if self.current_object:
                 self.pending_place = self.current_object

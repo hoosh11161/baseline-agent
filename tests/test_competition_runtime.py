@@ -44,6 +44,9 @@ class CompetitionRuntimeTests(unittest.TestCase):
         third = runtime.validate_action(action)
         self.assertFalse(third.valid)
         self.assertEqual(third.failure_class, "LOOP_ERROR")
+        recovery = runtime.prompt_context()["recovery"]
+        self.assertEqual(recovery["state"], "RECOVERY")
+        self.assertIn("different legal", recovery["required_change"])
 
     def test_raven_ranked_retries_are_not_mistaken_for_a_loop(self) -> None:
         runtime = self.make_runtime()

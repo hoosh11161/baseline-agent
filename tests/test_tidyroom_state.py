@@ -16,6 +16,7 @@ class TidyRoomStateTests(unittest.TestCase):
 
     def test_pick_and_place_require_hand_state_verification(self) -> None:
         runtime = self.make_runtime()
+        self.assertEqual(runtime.progress.context()["states"]["7"], "TARGET_IDENTIFIED")
         take = {"action": "move_and_take_object", "parameters": {"object_id": "7"}, "output": 0}
         runtime.record_action(take, {"result": "success"})
         self.assertEqual(runtime.progress.context()["pending_pick"], "7")
@@ -28,6 +29,17 @@ class TidyRoomStateTests(unittest.TestCase):
         runtime.update_hand_state(False)
         self.assertEqual(runtime.progress.context()["states"]["7"], "VERIFIED")
         self.assertEqual(runtime.progress.context()["remaining_objects"], [])
+
+    def test_held_object_motion_is_explicit(self) -> None:
+        runtime = self.make_runtime()
+        take = {"action": "move_and_take_object", "parameters": {"object_id": "7"}, "output": 0}
+        runtime.record_action(take, {"result": "success"})
+        runtime.update_hand_state(True)
+        runtime.record_action(
+            {"action": "move_to_location", "parameters": {"target_location": [1, 2, 3]}},
+            {"result": "success"},
+        )
+        self.assertEqual(runtime.progress.context()["states"]["7"], "MOVING")
 
     def test_finish_guard_blocks_premature_finish(self) -> None:
         runtime = self.make_runtime()

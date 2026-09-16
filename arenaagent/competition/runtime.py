@@ -220,7 +220,9 @@ def _extract_numeric(value: Any, keys: tuple[str, ...]) -> float | None:
     return None
 
 
-def classify_failure(failure_class: str, error: str, action: Any, task_type: str) -> str:
+def classify_failure(  # noqa: PLR0911
+    failure_class: str, error: str, action: Any, task_type: str
+) -> str:
     raw = str(failure_class or "").upper()
     message = str(error or "").lower()
     name = str(action.get("action") or "").lower() if isinstance(action, dict) else ""
@@ -584,7 +586,7 @@ class CompetitionRuntime:
         )
         self.action_records = self.action_records[-50:]
 
-    def validate_action(  # noqa: PLR0911, PLR0912
+    def validate_action(  # noqa: PLR0911, PLR0912, PLR0915
         self, action: Any, *, object_in_hand: bool = False
     ) -> ActionValidation:
         if self.metrics is None:
@@ -694,11 +696,19 @@ class CompetitionRuntime:
                 next((params[key] for key in ("npc_name", "npc", "target", "name") if params.get(key)), "")
             )
             if not self.npc_memory.is_allowed(target):
-                return self._invalid(normalized, f"npc_name {target!r} is not in the official allowed mapping", "NPC_REASONING")
+                return self._invalid(
+                    normalized,
+                    f"npc_name {target!r} is not in the official allowed mapping",
+                    "NPC_REASONING",
+                )
         if name == "speak_to_npc":
             message = str(next((params[key] for key in ("message", "content", "text") if params.get(key)), ""))
             if not message.strip():
-                return self._invalid(normalized, "speak_to_npc requires a non-empty task-relevant question", "NPC_REASONING")
+                return self._invalid(
+                    normalized,
+                    "speak_to_npc requires a non-empty task-relevant question",
+                    "NPC_REASONING",
+                )
 
         signature = self.action_signature(normalized)
         # solve_raven advances through a cached ranked candidate list internally,
@@ -808,6 +818,14 @@ class CompetitionRuntime:
             if remaining > CRITICAL_REMAINING_STEPS
             else "CRITICAL"
         )
+        blocked_failed_actions = sum(
+            1 for count in self.failed_signatures.values() if count >= self.repeated_action_limit
+        )
+        recovery_active = (
+            self.metrics.stuck_count > 0
+            or self.metrics.repeated_actions > 0
+            or blocked_failed_actions > 0
+        )
         return {
             "task_type": self.task_type,
             "step_budget": {
@@ -828,9 +846,13 @@ class CompetitionRuntime:
                 "memory": self.npc_memory.context(),
             },
             "recovery": {
+                "state": "RECOVERY" if recovery_active else "NORMAL",
                 "stuck": self.metrics.stuck_count > 0,
-                "blocked_failed_actions": sum(
-                    1 for count in self.failed_signatures.values() if count >= self.repeated_action_limit
+                "blocked_failed_actions": blocked_failed_actions,
+                "required_change": (
+                    "discard the current micro-plan; observe again and choose a different legal subgoal/action"
+                    if recovery_active
+                    else "none"
                 ),
             },
             "strategy": self.strategy_context,
@@ -860,7 +882,7 @@ class CompetitionRuntime:
                         break
                     values.append(round((low + high) / 2.0, 3))
                 top = _as_number(upper.get("Z", upper.get("z")))
-                if len(values) == 2 and top is not None:
+                if len(values) == VECTOR_DIMENSIONS - 1 and top is not None:
                     candidates.append(
                         {"object_id": current_id, "source": "world_aabb_top", "location": [*values, top]}
                     )
