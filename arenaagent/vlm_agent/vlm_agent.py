@@ -146,22 +146,31 @@ class VLMAgent(AgentBase):
         # Honour a log_dir loaded after the agent object was constructed.
         self._competition.log_dir = Path(os.path.abspath(getattr(self.cfg, "log_dir", "logs") or "logs"))
         self._competition.ensure_episode(subject)
+        self._competition.set_run_metadata(self._run_metadata())
 
         # 1/2/3: 获取感知（第一视角 + 可见物体映射）
-        perception = (
-            self.tongsim.acquire_first_person_perception(self.character_id, width=1280, height=720)
-            if self.tongsim and self.character_id
-            else {}
-        )
+        self._competition.record_vision_call()
+        try:
+            perception = (
+                self.tongsim.acquire_first_person_perception(self.character_id, width=1280, height=720)
+                if self.tongsim and self.character_id
+                else {}
+            )
+        except Exception as exc:  # noqa: BLE001 - keep the official task loop alive
+            logger.exception("Perception call failed: {}", exc)
+            return self._recoverable_step_failure("PERCEPTION_ERROR", exc, stage="perception")
         b64_image = perception.get("image")
         self._save_perception_image(b64_image)
         visible_objects_info = perception.get("objects", [])
         self._last_visible_objects_info = visible_objects_info or []
         image_data = self._to_data_url(b64_image)
-        self._competition.record_vision_call()
         self._competition.observe(visible_objects_info, task_response)
 
-        logger.debug("Perception acquired: image size={}, visible objects={}", len(b64_image) if b64_image else 0, visible_objects_info)
+        logger.debug(
+            "Perception acquired: image size={}, visible objects={}",
+            len(b64_image) if b64_image else 0,
+            visible_objects_info,
+        )
 
         if self._should_handle_piece_transfer():
             piece_action = self._maybe_handle_piece_transfer(subject)
@@ -230,7 +239,17 @@ class VLMAgent(AgentBase):
         self._after_prompt_hook(subject)
 
         # 5: 调用大模型
-        response = self.vlm_client.invoke(messages) if self.vlm_client else None
+        try:
+            response = self.vlm_client.invoke(messages) if self.vlm_client else None
+        except Exception as exc:  # noqa: BLE001 - third-party clients may bypass Client.invoke
+            self._competition.record_llm_call()
+            logger.exception("Model invocation failed: {}", exc)
+            return self._recoverable_step_failure("MODEL_ERROR", exc, stage="model_invoke")
+        response_error = getattr(response, "error", None)
+        if response_error:
+            self._competition.record_llm_call()
+            logger.error("Model invocation exhausted retries: {}", response_error)
+            return self._recoverable_step_failure("MODEL_ERROR", response_error, stage="model_invoke")
         response_text = getattr(response, "text", None) or ""
         json_parsed_message = extract_last_json_from_text(response_text)
         self.last_json_parse_message = json_parsed_message
@@ -267,10 +286,43 @@ class VLMAgent(AgentBase):
 
         return action_res if isinstance(action_res, dict) else {}
 
+    def _recoverable_step_failure(self, failure_class: str, error: Any, *, stage: str) -> dict[str, Any]:
+        result = self._fail_result(
+            error=str(error),
+            failure_class=failure_class,
+            recoverable=True,
+            stage=stage,
+        )
+        self._last_action_res = result
+        self._competition.record_step_failure(failure_class, str(error), stage=stage)
+        return result
+
+    def _run_metadata(self) -> dict[str, Any]:
+        vlm_config = self.cfg.vlm_config
+        client_cfg = vlm_config.client_cfg
+        prompt_fingerprint = self.prompt_generator.fingerprint() if self.prompt_generator else ""
+        return {
+            "agent_build": "competition-runtime-v2",
+            "agent_class": type(self).__name__,
+            "client_type": vlm_config.client_type,
+            "model": client_cfg.name,
+            "prompt_fingerprint": prompt_fingerprint,
+            "runtime_config": {
+                "default_max_steps": self.cfg.default_max_steps,
+                "max_history_messages": self.cfg.max_history_messages,
+                "repeated_action_limit": self.cfg.repeated_action_limit,
+                "stagnant_observation_limit": self.cfg.stagnant_observation_limit,
+            },
+        }
+
     def _execute_validated_action(self, validation: ActionValidation) -> Any:
         if not validation.valid:
             logger.warning("Blocked invalid action before TongSim call: {}", validation.error)
-            return self._fail_result(error=validation.error, failure_class=validation.failure_class, locally_blocked=True)
+            return self._fail_result(
+                error=validation.error,
+                failure_class=validation.failure_class,
+                locally_blocked=True,
+            )
         return self._do_action(validation.action)
 
     def _record_competition_action(

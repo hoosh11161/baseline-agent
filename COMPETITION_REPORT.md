@@ -24,11 +24,13 @@ Real task performance remains **NOT VERIFIED** until ports `127.0.0.1:50051` and
 
 Offline engineering verification:
 
-- 19 unit/integration regressions passed.
+- 24 unit/integration regressions passed.
 - CLI model discovery passed.
 - Generated protobuf imports passed after fixing the official generator's package-prefix bug.
 - Raven checkpoint performed a real CPU forward pass and returned 512 ranked three-answer candidates.
 - Invalid hallucinated object IDs were proven not to reach the TongSim client in an integration test.
+- Model timeouts and perception failures were proven recoverable without sending a fake terminal action.
+- Verified trajectory export rejects unverified and non-official episode files and writes source hashes.
 
 ## Biggest Improvements
 
@@ -39,6 +41,7 @@ Offline engineering verification:
 5. Added episode metrics and failure reports with explicit verification status, first critical error and standard failure classes.
 6. Replaced the long example-heavy generic prompt with a shorter schema-bound policy and task-specific strategies.
 7. Fixed generated gRPC imports so the installed CLI starts without a top-level `arena` compatibility package.
+8. Added auditable action-trajectory export for later training: only official-service verified episodes can become labeled samples.
 
 ## Failed Experiments / Environment Blocks
 
@@ -73,6 +76,7 @@ uv run python -m pytest -q
 uv run python scripts/preflight.py --release-dir "C:\path\to\official\release"
 .\scripts\run_preliminary.ps1 -Model VLMGPT5Config -RunTimes 5
 uv run python scripts\benchmark.py
+uv run python scripts\export_verified_trajectories.py
 ```
 
 After the official runner finishes, use its own `start_test.bat package-results` command from the release directory to create `arena_offline/result_package.bin`. That packaging step cannot be truthfully completed without the official release bundle and its five result files.

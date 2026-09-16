@@ -5,18 +5,11 @@ import random
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
+
 from loguru import logger
 
 _CLIENT_REGISTRY: dict[str, type["Client"]] = {}
-_ERROR_RESPONSE = """
-[
-    {
-        "think": "error occurred when sending message to VLA. Terminating the subject.",
-        "action": "finish_task",
-        "output": 0
-    }
-]
-        """
+
 
 def RegisterClient(client_type: str) -> Callable[[type["Client"]], type["Client"]]:
     def decorator(cls: type["Client"]) -> type["Client"]:
@@ -36,6 +29,7 @@ class ClientResponse:
     usage: Any | None = None
     raw: Any | None = None
     token_usage: dict[str, int] | None = None
+    error: str | None = None
 
 
 class Client:
@@ -49,6 +43,7 @@ class Client:
         return getattr(self.native_client, item)
 
     def invoke(self, message: Any, max_retries: int = 3, base_delay: float = 0.5) -> ClientResponse:
+        last_error: Exception | None = None
         for attempt in range(max_retries):
             try:
                 response = self._invoke(message)
@@ -56,15 +51,20 @@ class Client:
                 self.last_response = response
                 return response
             except Exception as exc:
+                last_error = exc
                 self._rebuild()
                 logger.warning("invoke with error {}", exc)
                 if attempt < max_retries - 1:
                     delay = base_delay * (2**attempt) + random.uniform(0, 0.5)
                     time.sleep(delay)
 
-        error_response = ClientResponse(text=_ERROR_RESPONSE, usage=None, raw=None, token_usage=None)
-
-        return error_response
+        return ClientResponse(
+            text="",
+            usage=None,
+            raw=None,
+            token_usage=None,
+            error=f"{type(last_error).__name__}: {last_error}" if last_error else "model invocation failed",
+        )
 
     def _invoke(self, message: Any) -> ClientResponse:
         raise NotImplementedError()

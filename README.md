@@ -40,6 +40,8 @@
 - 基于稳定 object ID 的世界状态、计数去重、观察差异、NPC 事实与步数预算；
 - 重复动作/停滞检测和失败分类；
 - 每局 JSON 指标、`failure_report.json` 和 benchmark 汇总；
+- 官方判分轨迹的严格训练集导出（未验证回合不会混入）；
+- 模型超时、重试耗尽和感知异常的可恢复处理，不再伪造 `finish_task`；
 - Raven 本地模型直连，避免额外 VLM 决策；
 - 安全的模型 JSON 解析以及可安装环境下的 protobuf 导入修复。
 
@@ -52,6 +54,9 @@ uv run python -m pytest -q
 uv run python scripts/preflight.py --release-dir "C:\path\to\official\release"
 .\scripts\run_preliminary.ps1 -Model VLMGPT5Config -RunTimes 5
 uv run python scripts/benchmark.py
+uv run python scripts/export_verified_trajectories.py
 ```
 
-真实得分只会从官方任务服务返回的评测结果生成。完整边界、当前验证结果和后续 A/B 流程见 [COMPETITION_REPORT.md](COMPETITION_REPORT.md)。
+最后一条命令只接受由官方任务服务判分并标记为 verified 的回合，生成
+`training/verified_actions.jsonl` 和带来源 SHA-256 的 manifest。真实得分只会从官方任务服务返回的评测结果生成。
+完整边界、当前验证结果和后续 A/B 流程见 [COMPETITION_REPORT.md](COMPETITION_REPORT.md)。

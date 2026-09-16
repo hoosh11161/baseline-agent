@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import os
-import string
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
+from loguru import logger
+
 from arenaagent.utils.configclass import configclass
 
-from loguru import logger
+
 @configclass
 class MessageTemplate:
     """Configuration class for agent.
@@ -107,6 +110,20 @@ class PromptGenerator:
         )
 
         return [system_message] + context_messages + [user_message]
+
+    def fingerprint(self) -> str:
+        """Return a stable hash for the prompt templates used by this run."""
+        assets = self._load_assets()
+        payload = {
+            "characteristics": assets.characteristics,
+            "interactions": assets.interactions,
+            "history": assets.history,
+            "instructions": assets.instructions,
+            "user_template": self._copy_template(self.config.user_message_template),
+            "system_template": self._copy_template(self.config.system_message_template),
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def _load_assets(self) -> PromptAssets:
         if self._assets is not None:

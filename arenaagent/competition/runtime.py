@@ -195,6 +195,8 @@ class EpisodeMetrics:
     tokens: int = 0
     latency: float = 0.0
     stuck_count: int = 0
+    model_errors: int = 0
+    perception_errors: int = 0
     termination_reason: str = ""
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     finished_at: str = ""
@@ -236,6 +238,7 @@ class CompetitionRuntime:
             "disappeared": [],
             "changed": [],
         }
+        self.run_metadata: dict[str, Any] = {}
         self._started_monotonic = 0.0
         self._last_subject_key = ""
 
@@ -272,6 +275,7 @@ class CompetitionRuntime:
         self.npc_facts = []
         self.first_failure = None
         self.last_observation_diff = {"appeared": [], "disappeared": [], "changed": []}
+        self.run_metadata = {}
         self._started_monotonic = time.perf_counter()
         self._last_subject_key = subject_key
 
@@ -364,6 +368,56 @@ class CompetitionRuntime:
     def record_vision_call(self) -> None:
         if self.metrics is not None:
             self.metrics.vision_calls += 1
+
+    def set_run_metadata(self, metadata: dict[str, Any]) -> None:
+        """Attach reproducibility data without ever persisting credentials."""
+        allowed = {
+            "agent_build",
+            "agent_class",
+            "client_type",
+            "model",
+            "prompt_fingerprint",
+            "runtime_config",
+        }
+        self.run_metadata.update(
+            {key: _canonical(value) for key, value in metadata.items() if key in allowed}
+        )
+
+    def _state_snapshot(self) -> dict[str, Any]:
+        return {
+            "task_type": self.task_type,
+            "step": self.metrics.steps if self.metrics else 0,
+            "max_steps": self.max_steps,
+            "visible_object_ids": sorted(self.visible_object_ids),
+            "observation_diff": self.last_observation_diff,
+            "object_counts": self._count_summary(),
+            "npc_facts": self.npc_facts[-8:],
+        }
+
+    def record_step_failure(self, failure_class: str, error: str, *, stage: str) -> None:
+        """Record a recoverable infrastructure/model failure as one attempted step."""
+        if self.metrics is None:
+            return
+        self._capture_failure(failure_class, error, {})
+        self.metrics.steps += 1
+        self.metrics.retries += 1
+        if failure_class == "MODEL_ERROR":
+            self.metrics.model_errors += 1
+        if failure_class == "PERCEPTION_ERROR":
+            self.metrics.perception_errors += 1
+        self.action_records.append(
+            {
+                "step": self.metrics.steps,
+                "signature": "",
+                "state": self._state_snapshot(),
+                "action": {},
+                "result": {"result": "failed", "error": str(error)},
+                "failed": True,
+                "failure_class": failure_class,
+                "stage": stage,
+            }
+        )
+        self.action_records = self.action_records[-50:]
 
     def validate_action(  # noqa: PLR0911, PLR0912
         self, action: Any, *, object_in_hand: bool = False
@@ -516,6 +570,7 @@ class CompetitionRuntime:
             {
                 "step": self.metrics.steps,
                 "signature": signature,
+                "state": self._state_snapshot(),
                 "action": _canonical(action),
                 "result": _canonical(result),
                 "failed": bool(failed),
@@ -600,6 +655,7 @@ class CompetitionRuntime:
         self.metrics.finished_at = datetime.now(timezone.utc).isoformat()
         self.metrics.latency = round(time.perf_counter() - self._started_monotonic, 6)
         payload = asdict(self.metrics)
+        payload["run_metadata"] = self.run_metadata
         payload["evaluation"] = _canonical(evaluation)
         payload["world_state"] = {
             "known_objects": len(self.objects),

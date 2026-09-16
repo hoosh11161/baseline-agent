@@ -41,6 +41,20 @@ class FakeClient:
         )
 
 
+class RaisingClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def invoke(self, messages):
+        self.calls += 1
+        raise TimeoutError("model timeout")
+
+
+class RaisingTongSim(FakeTongSim):
+    def acquire_first_person_perception(self, character_id, width=None, height=None):
+        raise ConnectionError("perception unavailable")
+
+
 class AgentIntegrationTests(unittest.TestCase):
     def make_agent(self, response_text: str) -> tuple[PreliminaryBaselineAgent, FakeTongSim, FakeClient]:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -111,7 +125,33 @@ class AgentIntegrationTests(unittest.TestCase):
         agent._on_subject_evaluated({"success": True, "score": 1})
         path = Path(self.temp_dir.name) / "metrics" / "episode_verified-1.json"
         self.assertTrue(path.exists())
-        self.assertIn('"verified": true', path.read_text(encoding="utf-8"))
+        payload = path.read_text(encoding="utf-8")
+        self.assertIn('"verified": true', payload)
+        self.assertIn('"prompt_fingerprint"', payload)
+        self.assertNotIn('"api_key"', payload)
+
+    def test_model_timeout_is_recoverable_and_does_not_call_tongsim(self) -> None:
+        agent, tongsim, _ = self.make_agent("not used")
+        client = RaisingClient()
+        agent.vlm_client = client
+        result = agent.run_step({"task_id": "timeout-1", "task_type": "tidyroom", "subject": "整理房间"}, {})
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(tongsim.calls, [])
+        self.assertTrue(result["recoverable"])
+        self.assertEqual(result["failure_class"], "MODEL_ERROR")
+        self.assertEqual(agent._competition.metrics.model_errors, 1)
+        self.assertEqual(agent._competition.metrics.steps, 1)
+
+    def test_perception_failure_is_recoverable(self) -> None:
+        agent, _, client = self.make_agent("not used")
+        agent.tongsim = RaisingTongSim()
+        result = agent.run_step({"task_id": "vision-1", "task_type": "counting", "subject": "计数"}, {})
+        self.assertEqual(client.calls, 0)
+        self.assertTrue(result["recoverable"])
+        self.assertEqual(result["failure_class"], "PERCEPTION_ERROR")
+        self.assertEqual(agent._competition.metrics.perception_errors, 1)
+        self.assertEqual(agent._competition.metrics.vision_calls, 1)
+        self.assertEqual(agent._competition.first_failure["step"], 1)
 
 
 if __name__ == "__main__":
