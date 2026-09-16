@@ -196,10 +196,8 @@ class VLMAgent(AgentBase):
 
         # 4: 生成大模型 prompt
         api_info = self._load_api_info()
-        if not self._npc_name_to_asset_name:
-            self._npc_name_to_asset_name = (
-                subject["npc_asset_name"] if isinstance(subject, dict) and "npc_asset_name" in subject else {}
-            )
+        if isinstance(subject, dict) and isinstance(subject.get("npc_asset_name"), dict):
+            self._npc_name_to_asset_name = dict(subject["npc_asset_name"])
 
         self._before_prompt_hook(subject)
 
@@ -283,6 +281,7 @@ class VLMAgent(AgentBase):
         logger.info("vlm client response {} and parsed json message {}", response_text, str(json_parsed_message))
         # 6: 解析回复
         parsed_action = self._parse_action_from_response(json_parsed_message)
+        parsed_action = self._normalize_action_parameters(parsed_action)
 
         # 7: 执行动作
         validation = self._competition.validate_action(parsed_action, object_in_hand=bool(object_in_hand))
@@ -300,6 +299,25 @@ class VLMAgent(AgentBase):
             )
 
         return action_res if isinstance(action_res, dict) else {}
+
+    def _normalize_action_parameters(self, action: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(action, dict):
+            return {}
+        normalized = dict(action)
+        name = str(normalized.get("action") or "").lower()
+        params = normalized.get("parameters")
+        if not isinstance(params, dict):
+            return normalized
+        params = dict(params)
+        if name in {"move_to_npc", "speak_to_npc"}:
+            for key in ("npc_name", "npc", "npc_id", "target", "name"):
+                if params.get(key) not in (None, ""):
+                    params["npc_name"] = self._resolve_npc_name(params[key])
+                    if key != "npc_name":
+                        params.pop(key, None)
+                    break
+        normalized["parameters"] = params
+        return normalized
 
     def _recoverable_step_failure(self, failure_class: str, error: Any, *, stage: str) -> dict[str, Any]:
         result = self._fail_result(

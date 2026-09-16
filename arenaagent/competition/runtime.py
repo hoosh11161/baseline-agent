@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from arenaagent.competition.solvers.npc import NPCMemory
 from arenaagent.competition.solvers.tidyroom import TidyRoomTracker
 
 TASK_TYPES = {"tidyroom", "counting", "npc", "raven", "jigsaw", "unknown"}
@@ -275,6 +276,7 @@ class CompetitionRuntime:
         self.run_metadata: dict[str, Any] = {}
         self.strategy_context: dict[str, Any] = {}
         self.progress = TidyRoomTracker(retry_limit=self.repeated_action_limit)
+        self.npc_memory = NPCMemory()
         self._started_monotonic = 0.0
         self._last_subject_key = ""
 
@@ -316,6 +318,7 @@ class CompetitionRuntime:
         self.run_metadata = {}
         self.strategy_context = {}
         self.progress.reset(subject_dict)
+        self.npc_memory.reset(subject_dict)
         self._started_monotonic = time.perf_counter()
         self._last_subject_key = subject_key
 
@@ -446,6 +449,7 @@ class CompetitionRuntime:
                 fact = {"step": self.metrics.steps if self.metrics else 0, "source": key, "value": _canonical(value)}
                 if fact not in self.npc_facts:
                     self.npc_facts.append(fact)
+                self.npc_memory.ingest_fact(value)
 
     def record_npc_exchange(self, target: str, question: str, reply: Any, hints: Any = None) -> None:
         if self.metrics is None:
@@ -460,6 +464,7 @@ class CompetitionRuntime:
         }
         if fact not in self.npc_facts:
             self.npc_facts.append(fact)
+        self.npc_memory.record_exchange(str(target), str(question), reply, hints)
 
     def record_llm_call(self, token_usage: Any = None) -> None:
         if self.metrics is None:
@@ -633,6 +638,17 @@ class CompetitionRuntime:
                     "PLANNING_ERROR",
                 )
 
+        if name in {"move_to_npc", "speak_to_npc"}:
+            target = str(
+                next((params[key] for key in ("npc_name", "npc", "target", "name") if params.get(key)), "")
+            )
+            if not self.npc_memory.is_allowed(target):
+                return self._invalid(normalized, f"npc_name {target!r} is not in the official allowed mapping", "NPC_REASONING")
+        if name == "speak_to_npc":
+            message = str(next((params[key] for key in ("message", "content", "text") if params.get(key)), ""))
+            if not message.strip():
+                return self._invalid(normalized, "speak_to_npc requires a non-empty task-relevant question", "NPC_REASONING")
+
         signature = self.action_signature(normalized)
         # solve_raven advances through a cached ranked candidate list internally,
         # so a few identical public actions are distinct attempts, but retries
@@ -654,7 +670,7 @@ class CompetitionRuntime:
         if name == "speak_to_npc":
             target = str(next((params[key] for key in ("npc_name", "npc", "target", "name") if params.get(key)), ""))
             message = str(next((params[key] for key in ("message", "content", "text") if params.get(key)), ""))
-            if (target, message) in self.questions_asked:
+            if self.npc_memory.was_asked(target, message):
                 return self._invalid(normalized, "duplicate NPC question blocked", "MEMORY_ERROR")
         return ActionValidation(valid=True, action=normalized)
 
@@ -753,6 +769,7 @@ class CompetitionRuntime:
             "npc": {
                 "facts": self.npc_facts[-8:],
                 "questions_asked": [list(item) for item in sorted(self.questions_asked)],
+                "memory": self.npc_memory.context(),
             },
             "recovery": {
                 "stuck": self.metrics.stuck_count > 0,
