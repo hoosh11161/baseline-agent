@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from arenaagent.competition.runtime import CompetitionRuntime, route_task
+from arenaagent.competition.runtime import CompetitionRuntime, classify_failure, route_task
 
 
 class CompetitionRuntimeTests(unittest.TestCase):
@@ -141,6 +141,15 @@ class CompetitionRuntimeTests(unittest.TestCase):
         self.assertTrue((metrics_dir / "episode_episode-1.json").exists())
         report = json.loads((metrics_dir / "failure_report.json").read_text(encoding="utf-8"))
         self.assertEqual(report[0]["first_critical_error"]["error_type"], "ACTION_ERROR")
+        self.assertEqual(report[0]["first_critical_error"]["category"], "JSON_PARSE")
+
+    def test_failure_taxonomy_maps_task_specific_errors(self) -> None:
+        self.assertEqual(classify_failure("MODEL_ERROR", "timeout", {}, "tidyroom"), "MODEL_API")
+        self.assertEqual(classify_failure("REASONING_ERROR", "wrong", {}, "raven"), "RAVEN_REASONING")
+        self.assertEqual(
+            classify_failure("ACTION_ERROR", "failed", {"action": "put_down_sth"}, "tidyroom"),
+            "PLACEMENT",
+        )
 
 
 if __name__ == "__main__":

@@ -151,7 +151,11 @@ class VLMAgent(AgentBase):
 
         # Honour a log_dir loaded after the agent object was constructed.
         self._competition.log_dir = Path(os.path.abspath(getattr(self.cfg, "log_dir", "logs") or "logs"))
+        previous_episode_id = self._competition.metrics.episode_id if self._competition.metrics else None
         self._competition.ensure_episode(subject)
+        current_episode_id = self._competition.metrics.episode_id if self._competition.metrics else None
+        if current_episode_id != previous_episode_id:
+            self._reset_episode_state(subject)
         self._competition.set_run_metadata(self._run_metadata())
 
         # 1/2/3: 获取感知（第一视角 + 可见物体映射）
@@ -273,9 +277,9 @@ class VLMAgent(AgentBase):
             logger.info("Token Usage: \n")
             logger.info(
                 "Prompt tokens: {}, Completion tokens: {}, Total tokens: {}",
-                token_usage["prompt_tokens"],
-                token_usage["completion_tokens"],
-                token_usage["total_tokens"],
+                token_usage.get("prompt_tokens", 0),
+                token_usage.get("completion_tokens", 0),
+                token_usage.get("total_tokens", 0),
             )
 
         logger.info("vlm client response {} and parsed json message {}", response_text, str(json_parsed_message))
@@ -285,6 +289,28 @@ class VLMAgent(AgentBase):
 
         # 7: 执行动作
         validation = self._competition.validate_action(parsed_action, object_in_hand=bool(object_in_hand))
+        if not validation.valid and self.vlm_client:
+            repair_messages = self._build_repair_messages(messages, response_text, validation)
+            try:
+                repaired_response = self.vlm_client.invoke(repair_messages)
+            except Exception as exc:  # noqa: BLE001 - bounded repair must not crash the episode
+                logger.warning("Bounded action repair failed: {}", exc)
+            else:
+                repaired_error = getattr(repaired_response, "error", None)
+                repaired_text = getattr(repaired_response, "text", None) or ""
+                self._competition.record_llm_call(getattr(repaired_response, "token_usage", None))
+                if not repaired_error:
+                    repaired_json = extract_last_json_from_text(repaired_text)
+                    repaired_action = self._normalize_action_parameters(
+                        self._parse_action_from_response(repaired_json)
+                    )
+                    repaired_validation = self._competition.validate_action(
+                        repaired_action, object_in_hand=bool(object_in_hand)
+                    )
+                    if repaired_validation.valid:
+                        parsed_action = repaired_action
+                        validation = repaired_validation
+                        response_text = repaired_text
         action_res = self._execute_validated_action(validation)
         self._last_action_res = action_res if action_res is not None else {}
         self._record_competition_action(parsed_action, action_res, validation)
@@ -299,6 +325,45 @@ class VLMAgent(AgentBase):
             )
 
         return action_res if isinstance(action_res, dict) else {}
+
+    def _reset_episode_state(self, subject: Any) -> None:
+        self._cleanup_raven_temp_images()
+        self.history_messages = []
+        self.last_json_parse_message = {}
+        self._last_visible_objects_info = []
+        self._last_npc_reply = ""
+        self._last_npc_subject = None
+        self._last_action_res = {}
+        self._last_apply_resp = {}
+        self._handled_piece_transfers = set()
+        self._npc_name_to_asset_name = (
+            dict(subject.get("npc_asset_name", {}))
+            if isinstance(subject, dict) and isinstance(subject.get("npc_asset_name"), dict)
+            else {}
+        )
+        self._movable_objects = []
+        self._action_histories = []
+        self._raven_candidates_cache = {}
+        self._raven_decision_cache = {}
+        self._raven_next_index = {}
+
+    @staticmethod
+    def _build_repair_messages(
+        messages: list[dict[str, Any]], response_text: str, validation: ActionValidation
+    ) -> list[dict[str, Any]]:
+        repair = copy.deepcopy(messages)
+        repair.append({"role": "assistant", "content": response_text})
+        repair.append(
+            {
+                "role": "user",
+                "content": (
+                    "The proposed action was blocked locally and was not executed. "
+                    f"Error: {validation.error}. Return exactly one different valid JSON action. "
+                    "Do not repeat the blocked action and do not invent IDs or coordinates."
+                ),
+            }
+        )
+        return repair
 
     def _normalize_action_parameters(self, action: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(action, dict):
@@ -577,7 +642,7 @@ class VLMAgent(AgentBase):
                 return {}
 
             action = first.get("action")
-            params = first.get("parameters", {})
+            params = first.get("parameters", first.get("params", {}))
             output = first.get("output")
             think = first.get("think")
             return {"action": action, "parameters": params, "output": output, "think": think}

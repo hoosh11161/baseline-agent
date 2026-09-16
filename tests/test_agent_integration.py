@@ -45,6 +45,17 @@ class FakeClient:
         )
 
 
+class SequenceClient:
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = list(responses)
+        self.calls = 0
+
+    def invoke(self, messages):
+        response = self.responses[min(self.calls, len(self.responses) - 1)]
+        self.calls += 1
+        return ClientResponse(text=response, token_usage={"total_tokens": 1})
+
+
 class RaisingClient:
     def __init__(self) -> None:
         self.calls = 0
@@ -81,10 +92,10 @@ class AgentIntegrationTests(unittest.TestCase):
             '"parameters":{"object_id":"999"},"output":0}]'
         )
         result = agent.run_step({"task_type": "tidyroom", "subject": "整理房间"}, {})
-        self.assertEqual(client.calls, 1)
+        self.assertEqual(client.calls, 2)
         self.assertEqual(tongsim.calls, [])
         self.assertTrue(result["locally_blocked"])
-        self.assertEqual(agent._competition.metrics.invalid_actions, 1)
+        self.assertEqual(agent._competition.metrics.invalid_actions, 2)
 
     def test_prompt_renders_action_schema_and_world_state(self) -> None:
         agent, _, _ = self.make_agent("not used")
@@ -170,6 +181,28 @@ class AgentIntegrationTests(unittest.TestCase):
             tongsim.calls,
             [("turn_in_degree", 90.0), ("turn_in_degree", 180.0), ("turn_in_degree", 270.0)],
         )
+
+    def test_invalid_model_action_gets_one_bounded_repair(self) -> None:
+        agent, tongsim, _ = self.make_agent("not used")
+        agent.vlm_client = SequenceClient(
+            [
+                '[{"action":"move_and_take_object","parameters":{"object_id":"999"},"output":0}]',
+                '[{"action":"move_and_take_object","params":{"object_id":"1"},"output":0}]',
+            ]
+        )
+        result = agent.run_step({"task_id": "repair-1", "task_type": "tidyroom", "subject": "整理房间"}, {})
+        self.assertEqual(result["result"], "success")
+        self.assertEqual(agent.vlm_client.calls, 2)
+        self.assertEqual(tongsim.calls, [("move_and_take_object", "1")])
+
+    def test_new_episode_clears_previous_action_memory(self) -> None:
+        agent, _, _ = self.make_agent(
+            '[{"action":"move_and_take_object","parameters":{"object_id":"1"},"output":0}]'
+        )
+        agent.run_step({"task_id": "episode-a", "task_type": "tidyroom", "subject": "整理房间"}, {})
+        self.assertTrue(agent._action_histories)
+        agent.run_step({"task_id": "episode-b", "task_type": "tidyroom", "subject": "整理房间"}, {})
+        self.assertEqual(len(agent._action_histories), 1)
 
 
 if __name__ == "__main__":

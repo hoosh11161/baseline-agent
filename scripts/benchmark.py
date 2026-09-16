@@ -19,6 +19,11 @@ FIELDS = (
     "invalid_action_rate",
     "stuck_rate",
     "average_llm_calls",
+    "average_tokens",
+    "average_retries",
+    "average_latency",
+    "repeated_actions",
+    "finish_guard_blocks",
     "status",
 )
 MAX_FAILURE_EXAMPLES = 3
@@ -80,6 +85,11 @@ def summarize(episodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "invalid_action_rate": round(invalid / total_steps, 6) if total_steps else None,
                 "stuck_rate": round(stuck_episodes / len(group), 6) if group else None,
                 "average_llm_calls": _average([float(item.get("llm_calls", 0)) for item in group]),
+                "average_tokens": _average([float(item.get("tokens", 0)) for item in group]),
+                "average_retries": _average([float(item.get("retries", 0)) for item in group]),
+                "average_latency": _average([float(item.get("latency", 0)) for item in group]),
+                "repeated_actions": sum(int(item.get("repeated_actions", 0)) for item in group),
+                "finish_guard_blocks": sum(int(item.get("finish_guard_blocks", 0)) for item in group),
                 "status": "VERIFIED" if verified else "NOT_VERIFIED",
             }
         )
@@ -95,7 +105,7 @@ def failure_frequencies(episodes: list[dict[str, Any]], metrics_dir: Path) -> li
         except (OSError, json.JSONDecodeError):
             continue
         failure = report.get("first_critical_error") or {}
-        error_type = str(failure.get("error_type") or "UNCLASSIFIED")
+        error_type = str(failure.get("category") or failure.get("error_type") or "UNCLASSIFIED")
         counts[error_type] += 1
         if len(examples[error_type]) < MAX_FAILURE_EXAMPLES:
             examples[error_type].append(str(report.get("episode_id") or ""))

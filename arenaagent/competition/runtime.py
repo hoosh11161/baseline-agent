@@ -19,6 +19,22 @@ EARLY_PHASE_RATIO = 0.65
 MID_PHASE_RATIO = 0.3
 CRITICAL_REMAINING_STEPS = 5
 MAX_RAVEN_ATTEMPTS = 3
+FAILURE_CATEGORIES = {
+    "PERCEPTION",
+    "COUNT_DUPLICATION",
+    "PLANNING",
+    "INVALID_ACTION",
+    "NAVIGATION",
+    "PLACEMENT",
+    "NPC_REASONING",
+    "RAVEN_REASONING",
+    "JIGSAW_SPATIAL",
+    "JSON_PARSE",
+    "MODEL_API",
+    "LOOP",
+    "PREMATURE_FINISH",
+    "UNKNOWN",
+}
 OBJECT_ACTIONS = {
     "look_at_object",
     "point_at_object",
@@ -204,6 +220,39 @@ def _extract_numeric(value: Any, keys: tuple[str, ...]) -> float | None:
     return None
 
 
+def classify_failure(failure_class: str, error: str, action: Any, task_type: str) -> str:
+    raw = str(failure_class or "").upper()
+    message = str(error or "").lower()
+    name = str(action.get("action") or "").lower() if isinstance(action, dict) else ""
+    if raw in FAILURE_CATEGORIES:
+        return raw
+    if raw == "PERCEPTION_ERROR":
+        return "PERCEPTION"
+    if raw == "MODEL_ERROR":
+        return "MODEL_API"
+    if raw == "LOOP_ERROR":
+        return "LOOP"
+    if raw in {"TERMINATION_ERROR", "PREMATURE_FINISH"}:
+        return "PREMATURE_FINISH"
+    if raw == "MEMORY_ERROR":
+        return "NPC_REASONING" if task_type == "npc" else "PLANNING"
+    if raw == "REASONING_ERROR":
+        return {
+            "raven": "RAVEN_REASONING",
+            "jigsaw": "JIGSAW_SPATIAL",
+            "npc": "NPC_REASONING",
+        }.get(task_type, "PLANNING")
+    if raw == "ACTION_ERROR":
+        if name in {"put_down_sth", "move_and_put_down", "move_and_put_down_object_in_container"}:
+            return "PLACEMENT"
+        if name.startswith("move_") or name in {"turn_in_degree", "turn_around_to_degree"}:
+            return "NAVIGATION"
+        if "malformed" in message or "missing action" in message or "empty" in message:
+            return "JSON_PARSE"
+        return "INVALID_ACTION"
+    return "UNKNOWN"
+
+
 @dataclass(slots=True)
 class ActionValidation:
     valid: bool
@@ -230,6 +279,8 @@ class EpisodeMetrics:
     stuck_count: int = 0
     model_errors: int = 0
     perception_errors: int = 0
+    repeated_actions: int = 0
+    finish_guard_blocks: int = 0
     termination_reason: str = ""
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     finished_at: str = ""
@@ -678,6 +729,10 @@ class CompetitionRuntime:
         if self.metrics is not None:
             self.metrics.invalid_actions += 1
             self.metrics.replans += 1
+            if failure_class == "LOOP_ERROR":
+                self.metrics.repeated_actions += 1
+            if failure_class in {"TERMINATION_ERROR", "PREMATURE_FINISH"}:
+                self.metrics.finish_guard_blocks += 1
         self._capture_failure(failure_class, error, action)
         return ActionValidation(valid=False, action=action, error=error, failure_class=failure_class)
 
@@ -734,6 +789,7 @@ class CompetitionRuntime:
             self.first_failure = {
                 "step": (self.metrics.steps + 1) if self.metrics else 0,
                 "error_type": failure_class,
+                "category": classify_failure(failure_class, error, action, self.task_type),
                 "message": str(error),
                 "action": _canonical(action),
             }
