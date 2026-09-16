@@ -1,7 +1,7 @@
 {
-    "jigsaw": "先用参考图和已放正确的拼图建立行列关系，再确定每个空槽的中心与所需旋转。一次只放一块并在下一观察中验证；坐标必须来自本题给出的 reference_bounding 或当前可见物体，禁止套用其他局的固定坐标。",
-    "tidyroom": "只处理能从任务、当前观察和包围盒确认放置目标的散乱物品；不要移动人物穿戴物。放置高度要落在目标承载面的上方，一次移动一件，成功后从待办中删除并观察验证，手中无物时禁止放置。",
-    "npc": "只可与本题 npc_asset_name 映射中存在的 NPC 对话。围绕任务所缺事实直接提问，记录已问问题和回复中的人物、地点、物品；禁止重复寒暄或重复同一问题，信息足够后用 submit_answer。",
-    "raven": "由本地 Raven solver 读取公开题面图片并提交候选答案，不臆造图形规律或答案。",
-    "counting": "优先使用按 object_id 去重的 object_registry 统计 name/category/type/color/shape；同一 ID 的重复出现只算一次。若题目要求全局计数而覆盖不足，先改变视角补充观察，证据充分后才 submit_answer。"
+    "jigsaw": "以 strategy.jigsaw_spatial_grid 为主：只使用 reference_bounding、公开位置和已放置块推导的网格中心。一次只放一块；放后等待手持状态或位置变化验证。低置信度坐标不得执行，禁止复用其他局坐标。",
+    "tidyroom": "严格遵循 task_progress 状态机。只拿当前可见且未 VERIFIED 的待整理物体；拿取后必须等待手持确认，放置优先使用 placement_candidates 的 place_location，其次使用公开 world_aabb_top；放后等待验证，失败最多有限重试。",
+    "npc": "只与 npc.memory.allowed_people 中的 NPC 对话。每次询问一个 unresolved fact，优先补足任务答案所需的人物、地点、物品或要求；复用 person_locations/object_locations，禁止重复问题和无信息寒暄，事实充分后 submit_answer。",
+    "raven": "由本地 Raven 专用模型裁剪题面并输出带置信度的排序候选；通用 VLM 不参与猜图。官方拒绝时最多尝试后续两个候选。",
+    "counting": "程序已完成按稳定 ID/公开位置去重和有界视角扫描。单条件结果由程序直接提交；若 strategy.result 是 grouped_counts，只按其中精确数值组织任务要求的格式，不得重新看图猜数。"
 }

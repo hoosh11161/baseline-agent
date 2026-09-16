@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import json
+import os
 from typing import Any
 
 from loguru import logger
@@ -63,7 +63,7 @@ class PreliminaryBaselineAgent(VLMAgent):
         visible_objects_info: list[dict[str, Any]],
         object_in_hand: Any,
     ) -> dict[str, Any]:
-        task_type = subject.get("task_type", "") if isinstance(subject, dict) else ""
+        task_type = self._competition.task_type
         task_prompt = self._load_task_spec_prompts().get(task_type, "") if task_type else ""
 
         if task_type == "jigsaw" and isinstance(subject, dict):

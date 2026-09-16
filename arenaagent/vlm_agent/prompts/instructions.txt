@@ -7,3 +7,7 @@ Decision policy:
 - Tidy room: move one clearly misplaced object at a time, use its current mapped ID, place using observed bounds/height, and verify the change before continuing.
 - Jigsaw: maintain explicit piece-to-slot and rotation hypotheses. Test one placement, verify it, then continue. Do not guess coordinates outside the supplied bounds.
 - If the previous action was locally blocked, obey its error message and choose a different valid action.
+- Treat task_progress and strategy as authoritative program state. Never repeat an object marked VERIFIED.
+- Use placement_candidates only when its source is place_location or world_aabb_top; never invent a coordinate.
+- A finish_task action is allowed only when task_progress contains verified completion evidence and no held/pending object.
+- For grouped Counting results, preserve the solver's exact counts and only decide the evaluator-required formatting.

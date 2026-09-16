@@ -645,7 +645,14 @@ class VLMAgent(AgentBase):
             params = first.get("parameters", first.get("params", {}))
             output = first.get("output")
             think = first.get("think")
-            return {"action": action, "parameters": params, "output": output, "think": think}
+            expected_change = first.get("expected_change", "")
+            return {
+                "action": action,
+                "parameters": params,
+                "output": output,
+                "think": think,
+                "expected_change": expected_change,
+            }
         except Exception as e:
             logger.error(f"解析动作失败: {e}")
             return {}

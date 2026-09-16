@@ -15,3 +15,4 @@ Previous official task-service response: {self.apply_resp}
 Recent actions: {self.action_histories}
 
 Choose exactly one next action. Base it only on current evidence and the official action schemas.
+Include expected_change so the next observation can verify success. Keep think short and factual.

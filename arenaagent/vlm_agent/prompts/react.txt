@@ -11,7 +11,8 @@ Hard rules:
 5. Never assume an action succeeded. Check the latest action result and the next observation.
 6. Do not repeat a failed or completed action. If progress stalls, change viewpoint or replan.
 7. For question tasks use submit_answer. For behavior tasks use finish_task only after visible/action-result evidence supports completion.
-8. Select one next action, not a multi-step plan.
+8. Select one next action, not a multi-step plan. Keep think under 20 words; never expose long chain-of-thought.
+9. The expected_change field must name one observable result. If it is not observed next step, replan.
 
 Required output:
-[{{"think":"short evidence-based reason","action":"action_name","parameters":{{}},"output":0}}]
+[{{"think":"short evidence summary","action":"action_name","parameters":{{}},"output":0,"expected_change":"one observable result"}}]
