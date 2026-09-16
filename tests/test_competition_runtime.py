@@ -187,6 +187,19 @@ class CompetitionRuntimeTests(unittest.TestCase):
         self.assertEqual(context["recovery"]["recent_failure_class"], "MODEL_ERROR")
         self.assertIn("7", runtime.objects)
 
+    def test_step_budget_blocks_actions_after_official_limit(self) -> None:
+        runtime = self.make_runtime()
+        runtime.ensure_episode({"task_type": "tidyroom", "subject": "整理", "max_steps": 1})
+        runtime.observe([{"object_id": "7", "name": "cup"}])
+        action = {"action": "move_to_object", "parameters": {"object_id": "7"}}
+        first = runtime.validate_action(action)
+        self.assertTrue(first.valid)
+        runtime.record_action(action, {"result": "success"}, validation=first)
+        second = runtime.validate_action({"action": "turn_in_degree", "parameters": {"degree": 45}})
+        self.assertFalse(second.valid)
+        self.assertEqual(second.failure_class, "TIME_BUDGET")
+        self.assertEqual(runtime.first_failure["category"], "TIME_BUDGET")
+
     def test_failure_artifacts_are_written(self) -> None:
         runtime = self.make_runtime()
         runtime.ensure_episode({"task_id": "episode-1", "task_type": "counting", "subject": "计数"})

@@ -19,7 +19,7 @@ from arenaagent.competition.task_router import TaskStrategyRouter
 from arenaagent.tongsim_grpc_client import TongSimGrpcClient
 from arenaagent.tongsim_interface import Rotation, TongSimInterface
 from arenaagent.utils.configclass import configclass
-from arenaagent.vlm_agent.client import ClientFactory
+from arenaagent.vlm_agent.client import Client, ClientFactory, ClientResponse
 from arenaagent.vlm_agent.json_parsor import extract_last_json_from_text
 from arenaagent.vlm_agent.prompt import PromptGenerator
 from arenaagent.vlm_agent.raven_skill import (
@@ -35,7 +35,7 @@ class VLMAgentCfg(AgentCfg):
     name: str = "vlm_agent"
     vlm_config: VLMConfig = VLMConfig()
     tongsim_server_endpoint: str = "127.0.0.1:50060"
-    max_history_messages: int = 15
+    max_history_messages: int = 8
     default_max_steps: int = 60
     repeated_action_limit: int = 2
     stagnant_observation_limit: int = 5
@@ -44,7 +44,9 @@ class VLMAgentCfg(AgentCfg):
 
 @Register("vlm_agent")
 class VLMAgent(AgentBase):
-    _MAX_ACTION_HISTORIES = 10
+    _MAX_ACTION_HISTORIES = 6
+    _MINIMAL_MESSAGE_COUNT = 2
+    _VECTOR_DIMENSIONS = 3
     _NPC_PINYIN_ALIASES: dict[str, str] = {
         "jiangshuyan": "江淑艳",
         "liuweidong": "刘伟东",
@@ -137,7 +139,9 @@ class VLMAgent(AgentBase):
         self.character_id = None
         self._initialized = False
 
-    def run_step(self, subject, task_response: dict[str, Any]) -> dict[str, Any]:
+    def run_step(  # noqa: PLR0911, PLR0912, PLR0915
+        self, subject, task_response: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         1. 获取第一视角图片和可见物体映射；
         2. 生成大模型 prompt；
@@ -201,7 +205,7 @@ class VLMAgent(AgentBase):
         self._task_router.observe(self._competition, subject)
 
         # 4: 生成大模型 prompt
-        api_info = self._load_api_info()
+        api_info = self._relevant_api_info(self._load_api_info(), self._competition.task_type)
         if isinstance(subject, dict) and isinstance(subject.get("npc_asset_name"), dict):
             self._npc_name_to_asset_name = dict(subject["npc_asset_name"])
 
@@ -253,28 +257,30 @@ class VLMAgent(AgentBase):
 
         self._last_npc_reply = ""
         self._last_npc_subject = {}
+        self._competition.record_prompt_context(self._strip_image_urls(messages))
         self._save_prompt_messages(messages)
 
         self._after_prompt_hook(subject)
 
         # 5: 调用大模型
-        try:
-            response = self.vlm_client.invoke(messages) if self.vlm_client else None
-        except Exception as exc:  # noqa: BLE001 - third-party clients may bypass Client.invoke
-            self._competition.record_llm_call()
-            logger.exception("Model invocation failed: {}", exc)
-            return self._recoverable_step_failure("MODEL_ERROR", exc, stage="model_invoke")
-        response_error = getattr(response, "error", None)
-        if response_error:
-            self._competition.record_llm_call()
-            logger.error("Model invocation exhausted retries: {}", response_error)
-            return self._recoverable_step_failure("MODEL_ERROR", response_error, stage="model_invoke")
+        response = self._invoke_model_with_recovery(messages)
+        if response is None:
+            fallback_action = self._safe_fallback_action(bool(object_in_hand))
+            if fallback_action is not None:
+                validation = self._competition.validate_action(fallback_action, object_in_hand=bool(object_in_hand))
+                action_res = self._execute_validated_action(validation)
+                self._record_competition_action(fallback_action, action_res, validation)
+                return action_res if isinstance(action_res, dict) else {}
+            return self._recoverable_step_failure(
+                "MODEL_ERROR",
+                "normal and shortened-context model attempts failed; no evidence-safe fallback exists",
+                stage="model_recovery_exhausted",
+            )
         response_text = getattr(response, "text", None) or ""
         json_parsed_message = extract_last_json_from_text(response_text)
         self.last_json_parse_message = json_parsed_message
 
         token_usage = getattr(response, "token_usage", None)
-        self._competition.record_llm_call(token_usage)
         if token_usage:
             logger.info("Token Usage: \n")
             logger.info(
@@ -292,10 +298,13 @@ class VLMAgent(AgentBase):
         # 7: 执行动作
         validation = self._competition.validate_action(parsed_action, object_in_hand=bool(object_in_hand))
         if not validation.valid and self.vlm_client:
+            self._competition.record_model_failure()
             repair_messages = self._build_repair_messages(messages, response_text, validation)
             try:
-                repaired_response = self.vlm_client.invoke(repair_messages)
+                repaired_response = self._invoke_client_once(repair_messages)
             except Exception as exc:  # noqa: BLE001 - bounded repair must not crash the episode
+                self._competition.record_llm_call()
+                self._competition.record_model_failure()
                 logger.warning("Bounded action repair failed: {}", exc)
             else:
                 repaired_error = getattr(repaired_response, "error", None)
@@ -311,6 +320,19 @@ class VLMAgent(AgentBase):
                         parsed_action = repaired_action
                         validation = repaired_validation
                         response_text = repaired_text
+                    else:
+                        self._competition.record_model_failure()
+                else:
+                    self._competition.record_model_failure()
+            if not validation.valid:
+                fallback_action = self._safe_fallback_action(bool(object_in_hand))
+                if fallback_action is not None:
+                    fallback_validation = self._competition.validate_action(
+                        fallback_action, object_in_hand=bool(object_in_hand)
+                    )
+                    if fallback_validation.valid:
+                        parsed_action = fallback_action
+                        validation = fallback_validation
         action_res = self._execute_validated_action(validation)
         self._last_action_res = action_res if action_res is not None else {}
         self._record_competition_action(parsed_action, action_res, validation)
@@ -346,6 +368,124 @@ class VLMAgent(AgentBase):
         self._raven_candidates_cache = {}
         self._raven_decision_cache = {}
         self._raven_next_index = {}
+
+    def _invoke_client_once(self, messages: list[dict[str, Any]]) -> ClientResponse:
+        if self.vlm_client is None:
+            raise RuntimeError("VLM client is not initialized")
+        if isinstance(self.vlm_client, Client):
+            return self.vlm_client.invoke(messages, max_retries=1)
+        return self.vlm_client.invoke(messages)
+
+    def _invoke_model_with_recovery(self, messages: list[dict[str, Any]]) -> ClientResponse | None:
+        """Try normal then shortened context; stage three is a local safe fallback."""
+        attempts = (messages, self._shortened_context_messages(messages))
+        for index, attempt_messages in enumerate(attempts, start=1):
+            try:
+                response = self._invoke_client_once(attempt_messages)
+            except Exception as exc:  # noqa: BLE001 - provider clients expose heterogeneous errors
+                self._competition.record_llm_call()
+                self._competition.record_model_failure()
+                logger.warning("Model recovery attempt {} raised: {}", index, exc)
+                continue
+            self._competition.record_llm_call(getattr(response, "token_usage", None))
+            if getattr(response, "error", None):
+                self._competition.record_model_failure()
+                logger.warning("Model recovery attempt {} failed: {}", index, response.error)
+                continue
+            return response
+        return None
+
+    @staticmethod
+    def _shortened_context_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if len(messages) <= VLMAgent._MINIMAL_MESSAGE_COUNT:
+            return copy.deepcopy(messages)
+        return [copy.deepcopy(messages[0]), copy.deepcopy(messages[-1])]
+
+    def _safe_fallback_action(self, object_in_hand: bool) -> dict[str, Any] | None:
+        """Return one conservative, evidence-backed action; never finish or invent a target."""
+        context = self._competition.prompt_context()
+        phase = str(context.get("step_budget", {}).get("phase") or "")
+        if object_in_hand:
+            candidates = context.get("placement_candidates") or []
+            if candidates:
+                location = candidates[0].get("location")
+                if location is not None:
+                    return {
+                        "think": "safe fallback uses observed placement evidence",
+                        "action": "put_down_sth",
+                        "parameters": {"target_location": location, "auto_rotate": True},
+                        "output": 0,
+                        "expected_change": "held object leaves the hand near the observed surface",
+                    }
+        if self._competition.task_type in {"tidyroom", "jigsaw"}:
+            remaining = self._competition.progress.expected_objects - self._competition.progress.completed_objects
+            for canonical_id in sorted(remaining & self._competition.visible_canonical_ids):
+                item = self._competition.objects.get(canonical_id, {})
+                current_id = str(item.get("current_object_id") or canonical_id)
+                return {
+                    "think": "safe fallback advances one official visible object",
+                    "action": "move_and_take_object",
+                    "parameters": {"object_id": current_id, "which_hand": 0},
+                    "output": 0,
+                    "expected_change": f"hand state confirms pickup of {current_id}",
+                }
+            if phase != "CRITICAL":
+                return {
+                    "think": "safe fallback refreshes the task view",
+                    "action": "turn_in_degree",
+                    "parameters": {"degree": 45.0},
+                    "output": 0,
+                    "expected_change": "visible-object mapping changes",
+                }
+        if self._competition.task_type == "unknown" and phase != "CRITICAL":
+            return {
+                "think": "safe fallback refreshes the current view",
+                "action": "turn_in_degree",
+                "parameters": {"degree": 45.0},
+                "output": 0,
+                "expected_change": "visible-object mapping changes",
+            }
+        return None
+
+    @staticmethod
+    def _relevant_api_info(api_info: Any, task_type: str) -> Any:
+        if not isinstance(api_info, dict):
+            return api_info
+        action_sets = {
+            "counting": {"turn_in_degree", "look_at_location", "submit_answer"},
+            "npc": {"move_to_npc", "speak_to_npc", "submit_answer"},
+            "raven": {"solve_raven"},
+            "jigsaw": {
+                "look_at_object",
+                "move_and_take_object",
+                "move_to_location",
+                "put_down_sth",
+                "turn_in_degree",
+                "finish_task",
+            },
+            "tidyroom": {
+                "look_at_location",
+                "look_at_object",
+                "move_and_take_object",
+                "move_forward",
+                "move_backward",
+                "move_to_object",
+                "move_to_location",
+                "put_down_sth",
+                "move_and_put_down",
+                "pour_water",
+                "sit_down_to_object",
+                "slice_food",
+                "wash_hands",
+                "wash_object_in_hand",
+                "mop_floor",
+                "rest",
+                "turn_in_degree",
+                "finish_task",
+            },
+        }
+        allowed = action_sets.get(task_type)
+        return {name: value for name, value in api_info.items() if allowed is None or name in allowed}
 
     @staticmethod
     def _build_repair_messages(
@@ -400,7 +540,7 @@ class VLMAgent(AgentBase):
         client_cfg = vlm_config.client_cfg
         prompt_fingerprint = self.prompt_generator.fingerprint() if self.prompt_generator else ""
         return {
-            "agent_build": "competition-runtime-v2",
+            "agent_build": "competition-runtime-v3",
             "agent_class": type(self).__name__,
             "client_type": vlm_config.client_type,
             "model": client_cfg.name,
@@ -634,7 +774,11 @@ class VLMAgent(AgentBase):
                     text = text.strip("` \n")
                     # 去掉可能的语言标记
                     parts = text.split("\n", 1)
-                    if len(parts) == 2 and parts[0].startswith("{") is False and parts[0].startswith("[") is False:
+                    if (
+                        len(parts) == self._MINIMAL_MESSAGE_COUNT
+                        and parts[0].startswith("{") is False
+                        and parts[0].startswith("[") is False
+                    ):
                         text = parts[1]
                 data = json.loads(text)
 
@@ -722,7 +866,7 @@ class VLMAgent(AgentBase):
             target_rotation = Rotation(
                 roll=target_rot[0] if len(target_rot) > 0 else 0.0,
                 pitch=target_rot[1] if len(target_rot) > 1 else 0.0,
-                yaw=target_rot[2] if len(target_rot) > 2 else 90.0,
+                yaw=target_rot[2] if len(target_rot) >= self._VECTOR_DIMENSIONS else 90.0,
             )
             self.tongsim.move_to_location(self.character_id, target_loc, stop_distance=30.0)
             put_result = self.tongsim.put_down_sth(
@@ -758,7 +902,7 @@ class VLMAgent(AgentBase):
                 except json.JSONDecodeError:
                     pass
             numbers = re.findall(r"[-+]?\d*\.?\d+", stripped)
-            if len(numbers) >= 3:
+            if len(numbers) >= VLMAgent._VECTOR_DIMENSIONS:
                 return [float(numbers[0]), float(numbers[1]), float(numbers[2])]
         return value
 
@@ -907,9 +1051,9 @@ class VLMAgent(AgentBase):
             if k in params:
                 return params[k]
             lk = k.lower()
-            for key in params:
+            for key, value in params.items():
                 if key.lower() == lk:
-                    return params[key]
+                    return value
         return default
 
     def _handle_look_at_location(self, params: dict[str, Any], action: dict[str, Any]) -> Any:
@@ -1236,9 +1380,6 @@ class VLMAgent(AgentBase):
 
     def _load_api_info(self) -> Any:
         try:
-            import json
-            import os
-
             here = os.path.dirname(os.path.abspath(__file__))
             api_info_path = os.path.join(here, "prompts", "api_info.json")
             with open(api_info_path, "r", encoding="utf-8") as f:

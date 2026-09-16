@@ -65,6 +65,16 @@ class RaisingClient:
         raise TimeoutError("model timeout")
 
 
+class ErrorResponseClient:
+    def __init__(self, error: str) -> None:
+        self.error = error
+        self.calls = 0
+
+    def invoke(self, messages):
+        self.calls += 1
+        return ClientResponse(text="", error=self.error)
+
+
 class RaisingTongSim(FakeTongSim):
     def acquire_first_person_perception(self, character_id, width=None, height=None):
         raise ConnectionError("perception unavailable")
@@ -122,15 +132,16 @@ class AgentIntegrationTests(unittest.TestCase):
         agent.action_space = {"key": "answer"}
         return agent, tongsim, client
 
-    def test_hallucinated_id_never_reaches_tongsim(self) -> None:
+    def test_hallucinated_id_never_reaches_object_api_and_uses_safe_fallback(self) -> None:
         agent, tongsim, client = self.make_agent(
             '[{"think":"guess","action":"move_and_take_object","parameters":{"object_id":"999"},"output":0}]'
         )
         result = agent.run_step({"task_type": "tidyroom", "subject": "整理房间"}, {})
         self.assertEqual(client.calls, 2)
-        self.assertEqual(tongsim.calls, [])
-        self.assertTrue(result["locally_blocked"])
+        self.assertEqual(tongsim.calls, [("turn_in_degree", 45.0)])
+        self.assertEqual(result["result"], "success")
         self.assertEqual(agent._competition.metrics.invalid_actions, 2)
+        self.assertEqual(agent._competition.metrics.model_failure_count, 2)
 
     def test_prompt_renders_action_schema_and_world_state(self) -> None:
         agent, _, _ = self.make_agent("not used")
@@ -215,16 +226,16 @@ class AgentIntegrationTests(unittest.TestCase):
         self.assertIn('"prompt_fingerprint"', payload)
         self.assertNotIn('"api_key"', payload)
 
-    def test_model_timeout_is_recoverable_and_does_not_call_tongsim(self) -> None:
+    def test_model_timeout_uses_short_context_then_safe_fallback(self) -> None:
         agent, tongsim, _ = self.make_agent("not used")
         client = RaisingClient()
         agent.vlm_client = client
         result = agent.run_step({"task_id": "timeout-1", "task_type": "tidyroom", "subject": "整理房间"}, {})
-        self.assertEqual(client.calls, 1)
-        self.assertEqual(tongsim.calls, [])
-        self.assertTrue(result["recoverable"])
-        self.assertEqual(result["failure_class"], "MODEL_ERROR")
-        self.assertEqual(agent._competition.metrics.model_errors, 1)
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(tongsim.calls, [("turn_in_degree", 45.0)])
+        self.assertEqual(result["result"], "success")
+        self.assertEqual(agent._competition.metrics.model_errors, 2)
+        self.assertEqual(agent._competition.metrics.model_failure_count, 2)
         self.assertEqual(agent._competition.metrics.steps, 1)
 
     def test_perception_failure_is_recoverable(self) -> None:
@@ -237,6 +248,16 @@ class AgentIntegrationTests(unittest.TestCase):
         self.assertEqual(agent._competition.metrics.perception_errors, 1)
         self.assertEqual(agent._competition.metrics.vision_calls, 1)
         self.assertEqual(agent._competition.first_failure["step"], 1)
+
+    def test_rate_limit_uses_bounded_recovery_and_safe_fallback(self) -> None:
+        agent, tongsim, _ = self.make_agent("not used")
+        client = ErrorResponseClient("rate limit")
+        agent.vlm_client = client
+        result = agent.run_step({"task_id": "rate-1", "task_type": "tidyroom", "subject": "整理房间"}, {})
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(result["result"], "success")
+        self.assertEqual(tongsim.calls, [("turn_in_degree", 45.0)])
+        self.assertEqual(agent._competition.metrics.model_failure_count, 2)
 
     def test_counting_uses_bounded_scan_then_deterministic_submit(self) -> None:
         agent, tongsim, client = self.make_agent("model must not be called")
@@ -328,6 +349,20 @@ class AgentIntegrationTests(unittest.TestCase):
         self.assertTrue(agent._action_histories)
         agent.run_step({"task_id": "episode-b", "task_type": "tidyroom", "subject": "整理房间"}, {})
         self.assertEqual(len(agent._action_histories), 1)
+
+    def test_prompt_schema_is_compressed_to_task_relevant_actions(self) -> None:
+        agent, _, _ = self.make_agent("not used")
+        api_info = agent._relevant_api_info(agent._load_api_info(), "npc")
+        self.assertEqual(set(api_info), {"move_to_npc", "speak_to_npc", "submit_answer"})
+        self.assertNotIn("slice_food", api_info)
+
+    def test_prompt_context_size_is_recorded_without_image_payload(self) -> None:
+        agent, _, _ = self.make_agent(
+            '[{"action":"move_and_take_object","parameters":{"object_id":"1"},"output":0}]'
+        )
+        agent.run_step({"task_id": "prompt-size", "task_type": "tidyroom", "subject": "整理房间"}, {})
+        self.assertGreater(agent._competition.metrics.prompt_chars, 0)
+        self.assertEqual(agent._competition.metrics.prompt_chars, agent._competition.metrics.max_prompt_chars)
 
 
 if __name__ == "__main__":

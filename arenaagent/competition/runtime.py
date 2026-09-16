@@ -298,12 +298,15 @@ class EpisodeMetrics:
     latency: float = 0.0
     stuck_count: int = 0
     model_errors: int = 0
+    model_failure_count: int = 0
     perception_errors: int = 0
     repeated_actions: int = 0
     finish_guard_blocks: int = 0
     postcondition_successes: int = 0
     postcondition_failures: int = 0
     postcondition_unknowns: int = 0
+    prompt_chars: int = 0
+    max_prompt_chars: int = 0
     termination_reason: str = ""
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     finished_at: str = ""
@@ -569,6 +572,22 @@ class CompetitionRuntime:
             if _as_number(total) is not None:
                 self.metrics.tokens += int(float(total))
 
+    def record_model_failure(self) -> None:
+        if self.metrics is not None:
+            self.metrics.model_errors += 1
+            self.metrics.model_failure_count += 1
+
+    def record_prompt_context(self, messages: Any) -> None:
+        if self.metrics is None:
+            return
+        try:
+            serialized = json.dumps(messages, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            serialized = str(messages)
+        size = len(serialized)
+        self.metrics.prompt_chars += size
+        self.metrics.max_prompt_chars = max(self.metrics.max_prompt_chars, size)
+
     def record_vision_call(self) -> None:
         if self.metrics is not None:
             self.metrics.vision_calls += 1
@@ -607,8 +626,8 @@ class CompetitionRuntime:
         self._capture_failure(failure_class, error, {})
         self.metrics.steps += 1
         self.metrics.retries += 1
-        if failure_class == "MODEL_ERROR":
-            self.metrics.model_errors += 1
+        if failure_class == "MODEL_ERROR" and self.metrics.model_failure_count == 0:
+            self.record_model_failure()
         if failure_class == "PERCEPTION_ERROR":
             self.metrics.perception_errors += 1
         self.action_records.append(
@@ -645,6 +664,8 @@ class CompetitionRuntime:
             return self._invalid(normalized, "parameters must be an object", "ACTION_ERROR")
         normalized["action"] = name
         normalized["parameters"] = params
+        if self.metrics.steps >= self.max_steps:
+            return self._invalid(normalized, "episode step budget is exhausted", "TIME_BUDGET")
 
         required: dict[str, tuple[str, ...]] = {
             "look_at_location": ("target_location", "location"),
@@ -958,6 +979,11 @@ class CompetitionRuntime:
                 "max_steps": self.max_steps,
                 "remaining_steps": remaining,
                 "phase": phase,
+                "policy": {
+                    "exploration_allowed": phase in {"EARLY", "MID"},
+                    "prefer_direct_progress": phase in {"LATE", "CRITICAL"},
+                    "retry_limit": 0 if phase == "CRITICAL" else 1 if phase == "LATE" else self.repeated_action_limit,
+                },
             },
             "visible_object_ids": sorted(self.visible_object_ids),
             "observation_diff": self.last_observation_diff,
