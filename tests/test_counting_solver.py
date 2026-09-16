@@ -56,6 +56,47 @@ class CountingSolverTests(unittest.TestCase):
         self.assertIsNone(solver.next_scan_action())
         self.assertTrue(solver.coverage_complete)
 
+    def test_except_color_uses_not_expression(self) -> None:
+        result = CountingSolver().solve("除了红色之外一共有多少物体", self.objects)
+        self.assertTrue(result.confident)
+        self.assertEqual(result.answer, 1)
+        self.assertEqual(result.matched_ids, ["2"])
+        self.assertEqual(result.expression.context()["exclude"]["filters"], ["color=Red"])
+
+    def test_not_blue_uses_not_expression(self) -> None:
+        result = CountingSolver().solve("不是蓝色的有多少物体", self.objects)
+        self.assertTrue(result.confident)
+        self.assertEqual(result.answer, 2)
+        self.assertEqual(result.matched_ids, ["1", "3"])
+
+    def test_relation_and_object_type_are_combined(self) -> None:
+        objects = {
+            "1": {"name": "cup", "support_surface": "table", "color": "Red"},
+            "2": {"name": "cup", "support_surface": "shelf", "color": "Blue"},
+            "3": {"name": "plate", "support_surface": "table", "color": "Blue"},
+        }
+        result = CountingSolver().solve("桌子上的杯子有多少", objects)
+        self.assertTrue(result.confident)
+        self.assertEqual(result.answer, 1)
+        self.assertEqual(result.matched_ids, ["1"])
+
+    def test_paired_groups_do_not_expand_to_cross_product(self) -> None:
+        objects = {
+            "1": {"name": "cup", "color": "Red"},
+            "2": {"name": "cup", "color": "Blue"},
+            "3": {"name": "plate", "color": "Red"},
+            "4": {"name": "plate", "color": "Blue"},
+            "5": {"name": "plate", "color": "Blue"},
+        }
+        result = CountingSolver().solve("红色杯子和蓝色盘子分别多少？", objects)
+        self.assertFalse(result.confident)
+        self.assertEqual(result.grouped_counts, {"name=cup&color=Red": 1, "name=plate&color=Blue": 2})
+
+    def test_total_word_keeps_same_field_values_as_union(self) -> None:
+        result = CountingSolver().solve("红色和蓝色物体总共多少？", self.objects)
+        self.assertTrue(result.confident)
+        self.assertEqual(result.answer, 3)
+
 
 if __name__ == "__main__":
     unittest.main()
