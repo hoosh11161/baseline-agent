@@ -117,6 +117,36 @@ def _object_id(item: dict[str, Any]) -> str:
     return ""
 
 
+def _object_position(item: dict[str, Any]) -> list[float] | None:
+    bounds = item.get("world_aabb")
+    if isinstance(bounds, dict) and isinstance(bounds.get("min"), dict) and isinstance(bounds.get("max"), dict):
+        lower = bounds["min"]
+        upper = bounds["max"]
+        values: list[float] = []
+        for axis in ("X", "Y", "Z"):
+            low = _as_number(lower.get(axis, lower.get(axis.lower())))
+            high = _as_number(upper.get(axis, upper.get(axis.lower())))
+            if low is None or high is None:
+                return None
+            values.append(round((low + high) / 2.0, 3))
+        return values
+    for key in ("position", "location", "place_location"):
+        value = item.get(key)
+        if _is_location(value):
+            if isinstance(value, dict):
+                lowered = {str(name).lower(): raw for name, raw in value.items()}
+                return [float(lowered[axis]) for axis in ("x", "y", "z")]
+            return [float(raw) for raw in value[:VECTOR_DIMENSIONS]]
+    return None
+
+
+def _semantic_identity(item: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        str(item.get(key) or "").strip().lower()
+        for key in ("name", "semantic_type", "category", "type", "color", "shape")
+    )
+
+
 def _as_number(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
@@ -226,7 +256,9 @@ class CompetitionRuntime:
         self.subject: dict[str, Any] = {}
         self.max_steps = self.default_max_steps
         self.objects: dict[str, dict[str, Any]] = {}
+        self.object_aliases: dict[str, str] = {}
         self.visible_object_ids: set[str] = set()
+        self.visible_canonical_ids: set[str] = set()
         self.observation_hashes: list[str] = []
         self.action_records: list[dict[str, Any]] = []
         self.failed_signatures: Counter[str] = Counter()
@@ -239,6 +271,7 @@ class CompetitionRuntime:
             "changed": [],
         }
         self.run_metadata: dict[str, Any] = {}
+        self.strategy_context: dict[str, Any] = {}
         self._started_monotonic = 0.0
         self._last_subject_key = ""
 
@@ -267,7 +300,9 @@ class CompetitionRuntime:
         self.metrics = EpisodeMetrics(episode_id=episode_id, task_type=route_task(subject_dict), task_text=task_text)
         self.max_steps = self._resolve_max_steps(subject_dict)
         self.objects = {}
+        self.object_aliases = {}
         self.visible_object_ids = set()
+        self.visible_canonical_ids = set()
         self.observation_hashes = []
         self.action_records = []
         self.failed_signatures = Counter()
@@ -276,6 +311,7 @@ class CompetitionRuntime:
         self.first_failure = None
         self.last_observation_diff = {"appeared": [], "disappeared": [], "changed": []}
         self.run_metadata = {}
+        self.strategy_context = {}
         self._started_monotonic = time.perf_counter()
         self._last_subject_key = subject_key
 
@@ -287,16 +323,26 @@ class CompetitionRuntime:
         if self.metrics is None:
             return
         objects = visible_objects if isinstance(visible_objects, list) else []
-        previous_visible_ids = set(self.visible_object_ids)
+        previous_visible_ids = set(self.visible_canonical_ids)
         previous_objects = {
             object_id: {
                 key: value
                 for key, value in item.items()
-                if key not in {"first_seen_step", "last_seen_step", "seen_count"}
+                if key
+                not in {
+                    "first_seen_step",
+                    "last_seen_step",
+                    "seen_count",
+                    "source_ids",
+                    "counted",
+                    "confidence",
+                    "current_object_id",
+                }
             }
             for object_id, item in self.objects.items()
         }
         self.visible_object_ids = set()
+        self.visible_canonical_ids = set()
         current_objects: dict[str, dict[str, Any]] = {}
         for raw in objects:
             if not isinstance(raw, dict):
@@ -305,19 +351,38 @@ class CompetitionRuntime:
             if not object_id:
                 continue
             self.visible_object_ids.add(object_id)
-            current_objects[object_id] = _canonical(raw)
-            existing = dict(self.objects.get(object_id, {}))
-            existing.update(_canonical(raw))
+            canonical_id = self.object_aliases.get(object_id)
+            if canonical_id is None:
+                canonical_id = object_id if object_id in self.objects else self._secondary_object_match(raw)
+                canonical_id = canonical_id or object_id
+                self.object_aliases[object_id] = canonical_id
+            self.visible_canonical_ids.add(canonical_id)
+            canonical_raw = _canonical(raw)
+            canonical_raw["object_id"] = canonical_id
+            canonical_raw["current_object_id"] = object_id
+            position = _object_position(raw)
+            if position is not None:
+                canonical_raw["position"] = position
+            current_objects[canonical_id] = {
+                key: value for key, value in canonical_raw.items() if key != "current_object_id"
+            }
+            existing = dict(self.objects.get(canonical_id, {}))
+            source_ids = set(existing.get("source_ids", []))
+            source_ids.add(object_id)
+            existing.update(canonical_raw)
+            existing["source_ids"] = sorted(source_ids)
+            existing.setdefault("counted", False)
+            existing["confidence"] = 1.0 if len(source_ids) == 1 else 0.85
             existing.setdefault("first_seen_step", self.metrics.steps)
             existing["last_seen_step"] = self.metrics.steps
             existing["seen_count"] = int(existing.get("seen_count", 0)) + 1
-            self.objects[object_id] = existing
+            self.objects[canonical_id] = existing
         self.last_observation_diff = {
-            "appeared": sorted(self.visible_object_ids - previous_visible_ids),
-            "disappeared": sorted(previous_visible_ids - self.visible_object_ids),
+            "appeared": sorted(self.visible_canonical_ids - previous_visible_ids),
+            "disappeared": sorted(previous_visible_ids - self.visible_canonical_ids),
             "changed": sorted(
                 object_id
-                for object_id in self.visible_object_ids & previous_visible_ids
+                for object_id in self.visible_canonical_ids & previous_visible_ids
                 if current_objects.get(object_id) != previous_objects.get(object_id)
             ),
         }
@@ -331,6 +396,27 @@ class CompetitionRuntime:
         ):
             self.metrics.stuck_count += 1
         self._capture_npc_facts(task_response)
+
+    def _secondary_object_match(self, raw: dict[str, Any], tolerance: float = 5.0) -> str | None:
+        """Match a remapped perception ID only with strong public-position evidence."""
+        position = _object_position(raw)
+        identity = _semantic_identity(raw)
+        if position is None or not any(identity):
+            return None
+        candidates: list[tuple[float, str]] = []
+        for canonical_id, existing in self.objects.items():
+            if _semantic_identity(existing) != identity:
+                continue
+            existing_position = _object_position(existing)
+            if existing_position is None:
+                continue
+            distance = math.dist(position, existing_position)
+            if distance <= tolerance:
+                candidates.append((distance, canonical_id))
+        if not candidates:
+            return None
+        candidates.sort()
+        return candidates[0][1]
 
     def _capture_npc_facts(self, task_response: Any) -> None:
         if not isinstance(task_response, dict):
@@ -383,12 +469,16 @@ class CompetitionRuntime:
             {key: _canonical(value) for key, value in metadata.items() if key in allowed}
         )
 
+    def set_strategy_context(self, context: dict[str, Any]) -> None:
+        self.strategy_context = _canonical(context)
+
     def _state_snapshot(self) -> dict[str, Any]:
         return {
             "task_type": self.task_type,
             "step": self.metrics.steps if self.metrics else 0,
             "max_steps": self.max_steps,
             "visible_object_ids": sorted(self.visible_object_ids),
+            "visible_registry_ids": sorted(self.visible_canonical_ids),
             "observation_diff": self.last_observation_diff,
             "object_counts": self._count_summary(),
             "npc_facts": self.npc_facts[-8:],
@@ -625,6 +715,7 @@ class CompetitionRuntime:
                     1 for count in self.failed_signatures.values() if count >= self.repeated_action_limit
                 ),
             },
+            "strategy": self.strategy_context,
         }
 
     def _count_summary(self) -> dict[str, dict[str, int]]:

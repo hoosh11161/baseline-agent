@@ -68,6 +68,58 @@ class CompetitionRuntimeTests(unittest.TestCase):
         self.assertEqual(state["observation_diff"]["appeared"], ["3"])
         self.assertEqual(state["observation_diff"]["disappeared"], ["2"])
 
+    def test_count_registry_matches_remapped_id_by_public_position(self) -> None:
+        runtime = self.make_runtime()
+        runtime.ensure_episode({"task_type": "counting", "subject": "多少红色物体"})
+        runtime.observe(
+            [
+                {
+                    "object_id": "1",
+                    "name": "cup",
+                    "color": "Red",
+                    "world_aabb": {"min": {"X": 0, "Y": 0, "Z": 0}, "max": {"X": 2, "Y": 2, "Z": 2}},
+                }
+            ]
+        )
+        runtime.observe(
+            [
+                {
+                    "object_id": "9",
+                    "name": "cup",
+                    "color": "Red",
+                    "world_aabb": {"min": {"X": 1, "Y": 0, "Z": 0}, "max": {"X": 3, "Y": 2, "Z": 2}},
+                }
+            ]
+        )
+        self.assertEqual(len(runtime.objects), 1)
+        self.assertEqual(runtime.objects["1"]["source_ids"], ["1", "9"])
+        self.assertEqual(runtime.visible_object_ids, {"9"})
+
+    def test_secondary_dedup_does_not_merge_distant_objects(self) -> None:
+        runtime = self.make_runtime()
+        runtime.ensure_episode({"task_type": "counting", "subject": "多少红色物体"})
+        runtime.observe(
+            [
+                {
+                    "object_id": "1",
+                    "name": "cup",
+                    "color": "Red",
+                    "place_location": {"X": 0, "Y": 0, "Z": 0},
+                }
+            ]
+        )
+        runtime.observe(
+            [
+                {
+                    "object_id": "9",
+                    "name": "cup",
+                    "color": "Red",
+                    "place_location": {"X": 100, "Y": 0, "Z": 0},
+                }
+            ]
+        )
+        self.assertEqual(len(runtime.objects), 2)
+
     def test_empty_hand_put_is_blocked(self) -> None:
         runtime = self.make_runtime()
         runtime.ensure_episode({"task_type": "jigsaw", "subject": "拼图"})

@@ -1,0 +1,6 @@
+﻿task_type,episodes,verified_episodes,success_rate,average_score,average_steps,median_steps,invalid_action_rate,stuck_rate,average_llm_calls,status
+tidyroom,0,0,,,,,,,,NOT_VERIFIED
+counting,0,0,,,,,,,,NOT_VERIFIED
+npc,0,0,,,,,,,,NOT_VERIFIED
+raven,0,0,,,,,,,,NOT_VERIFIED
+jigsaw,0,0,,,,,,,,NOT_VERIFIED

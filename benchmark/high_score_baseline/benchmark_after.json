@@ -1,0 +1,73 @@
+{
+  "status": "NOT_VERIFIED",
+  "reason": "No official task-service episode metrics were found.",
+  "episodes": [],
+  "summary": [
+    {
+      "task_type": "tidyroom",
+      "episodes": 0,
+      "verified_episodes": 0,
+      "success_rate": null,
+      "average_score": null,
+      "average_steps": null,
+      "median_steps": null,
+      "invalid_action_rate": null,
+      "stuck_rate": null,
+      "average_llm_calls": null,
+      "status": "NOT_VERIFIED"
+    },
+    {
+      "task_type": "counting",
+      "episodes": 0,
+      "verified_episodes": 0,
+      "success_rate": null,
+      "average_score": null,
+      "average_steps": null,
+      "median_steps": null,
+      "invalid_action_rate": null,
+      "stuck_rate": null,
+      "average_llm_calls": null,
+      "status": "NOT_VERIFIED"
+    },
+    {
+      "task_type": "npc",
+      "episodes": 0,
+      "verified_episodes": 0,
+      "success_rate": null,
+      "average_score": null,
+      "average_steps": null,
+      "median_steps": null,
+      "invalid_action_rate": null,
+      "stuck_rate": null,
+      "average_llm_calls": null,
+      "status": "NOT_VERIFIED"
+    },
+    {
+      "task_type": "raven",
+      "episodes": 0,
+      "verified_episodes": 0,
+      "success_rate": null,
+      "average_score": null,
+      "average_steps": null,
+      "median_steps": null,
+      "invalid_action_rate": null,
+      "stuck_rate": null,
+      "average_llm_calls": null,
+      "status": "NOT_VERIFIED"
+    },
+    {
+      "task_type": "jigsaw",
+      "episodes": 0,
+      "verified_episodes": 0,
+      "success_rate": null,
+      "average_score": null,
+      "average_steps": null,
+      "median_steps": null,
+      "invalid_action_rate": null,
+      "stuck_rate": null,
+      "average_llm_calls": null,
+      "status": "NOT_VERIFIED"
+    }
+  ],
+  "failure_frequencies": []
+}

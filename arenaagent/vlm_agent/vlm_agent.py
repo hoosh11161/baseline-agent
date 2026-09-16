@@ -15,6 +15,7 @@ from loguru import logger
 from arenaagent.agent_base import AgentBase, AgentCfg, parse_struct_to_data
 from arenaagent.builder import Register
 from arenaagent.competition.runtime import ActionValidation, CompetitionRuntime
+from arenaagent.competition.task_router import TaskStrategyRouter
 from arenaagent.tongsim_grpc_client import TongSimGrpcClient
 from arenaagent.tongsim_interface import Rotation, TongSimInterface
 from arenaagent.utils.configclass import configclass
@@ -38,6 +39,7 @@ class VLMAgentCfg(AgentCfg):
     default_max_steps: int = 60
     repeated_action_limit: int = 2
     stagnant_observation_limit: int = 5
+    counting_scan_degrees: list[float] = [90.0, 180.0, 270.0]
 
 
 @Register("vlm_agent")
@@ -91,6 +93,9 @@ class VLMAgent(AgentBase):
             repeated_action_limit=int(getattr(self.cfg, "repeated_action_limit", 2) or 2),
             stagnant_observation_limit=int(getattr(self.cfg, "stagnant_observation_limit", 5) or 5),
             default_max_steps=int(getattr(self.cfg, "default_max_steps", 60) or 60),
+        )
+        self._task_router = TaskStrategyRouter(
+            counting_scan_degrees=list(getattr(self.cfg, "counting_scan_degrees", [90.0, 180.0, 270.0]))
         )
 
     def init(self, opt: dict[str, Any]) -> None:
@@ -165,6 +170,7 @@ class VLMAgent(AgentBase):
         self._last_visible_objects_info = visible_objects_info or []
         image_data = self._to_data_url(b64_image)
         self._competition.observe(visible_objects_info, task_response)
+        self._task_router.observe(self._competition)
 
         logger.debug(
             "Perception acquired: image size={}, visible objects={}",
@@ -203,6 +209,13 @@ class VLMAgent(AgentBase):
             validation = self._competition.validate_action(raven_action, object_in_hand=bool(object_in_hand))
             action_res = self._execute_validated_action(validation)
             self._record_competition_action(raven_action, action_res, validation)
+            return action_res if isinstance(action_res, dict) else {}
+
+        strategy_action = self._task_router.propose_action(subject, self._competition)
+        if strategy_action is not None:
+            validation = self._competition.validate_action(strategy_action, object_in_hand=bool(object_in_hand))
+            action_res = self._execute_validated_action(validation)
+            self._record_competition_action(strategy_action, action_res, validation)
             return action_res if isinstance(action_res, dict) else {}
 
         subject_text = (
@@ -312,6 +325,7 @@ class VLMAgent(AgentBase):
                 "max_history_messages": self.cfg.max_history_messages,
                 "repeated_action_limit": self.cfg.repeated_action_limit,
                 "stagnant_observation_limit": self.cfg.stagnant_observation_limit,
+                "counting_scan_degrees": self.cfg.counting_scan_degrees,
             },
         }
 

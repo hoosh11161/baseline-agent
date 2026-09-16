@@ -27,6 +27,10 @@ class FakeTongSim:
         self.calls.append(("move_and_take_object", object_id))
         return {"result": "success"}
 
+    def turn_in_degree(self, character_id, degree):
+        self.calls.append(("turn_in_degree", degree))
+        return {"result": "success"}
+
 
 class FakeClient:
     def __init__(self, text: str) -> None:
@@ -152,6 +156,20 @@ class AgentIntegrationTests(unittest.TestCase):
         self.assertEqual(agent._competition.metrics.perception_errors, 1)
         self.assertEqual(agent._competition.metrics.vision_calls, 1)
         self.assertEqual(agent._competition.first_failure["step"], 1)
+
+    def test_counting_uses_bounded_scan_then_deterministic_submit(self) -> None:
+        agent, tongsim, client = self.make_agent("model must not be called")
+        subject = {"task_id": "count-1", "task_type": "counting", "subject": "有多少红色物体"}
+        for _ in range(3):
+            result = agent.run_step(subject, {})
+            self.assertEqual(result["result"], "success")
+        result = agent.run_step(subject, {})
+        self.assertEqual(result, {"answer": "1"})
+        self.assertEqual(client.calls, 0)
+        self.assertEqual(
+            tongsim.calls,
+            [("turn_in_degree", 90.0), ("turn_in_degree", 180.0), ("turn_in_degree", 270.0)],
+        )
 
 
 if __name__ == "__main__":
